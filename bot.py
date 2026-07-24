@@ -160,6 +160,9 @@ async def on_startup():
     logger.info("✅ БОТ ЗАПУЩЕН")
 
 if __name__ == "__main__":
+    async def post_init():
+        await on_startup()
+    
     port = int(os.environ.get("PORT", "8080"))
     webhook_url = os.environ.get("WEBHOOK_URL", None)
     
@@ -170,11 +173,11 @@ if __name__ == "__main__":
             port=port,
             webhook_url=webhook_url,
             drop_pending_updates=True,
-            on_startup=lambda: asyncio.create_task(on_startup())
+            post_init=post_init
         )
     else:
         logger.info("🔄 Поллинг")
         app.run_polling(
             drop_pending_updates=True,
-            on_startup=lambda: asyncio.create_task(on_startup())
+            post_init=post_init
         )
