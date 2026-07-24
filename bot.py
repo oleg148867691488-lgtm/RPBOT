@@ -5,7 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 # === НАШИ МОДУЛИ ===
-from config import BOT_TOKEN, ADMIN_ID, NEWS_INTERVAL_MINUTES, saved_chats
+from config import BOT_TOKEN, NEWS_INTERVAL_MINUTES, bot_stopped
 from commands import (
     start_command,
     country_command,
