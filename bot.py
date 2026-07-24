@@ -3,6 +3,7 @@ BOT.PY — RP БОТ ДЛЯ RENDER (ФИНАЛ)
 =====================================
 Автономная страна с ИИ (Iron Man режим).
 python-telegram-bot v22 + Python 3.14.
+Без MarkdownV2 в уведомлениях.
 """
 
 import asyncio
@@ -106,7 +107,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update and update.message:
         try:
             if update.message.from_user.id == ADMIN_ID:
-                await update.message.reply_text(f"❌ Ошибка:\n```\n{str(context.error)[:500]}\n```", parse_mode="Markdown")
+                await update.message.reply_text(f"❌ Ошибка:\n{str(context.error)[:500]}")
             else:
                 await update.message.reply_text("❌ Внутренняя ошибка.")
         except:
@@ -152,16 +153,13 @@ async def on_startup(app=None):
         country = get_country(ADMIN_ID) or "не выбрана"
         await app.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"✅ Бот запущен!\n🌍 Страна: {country}\n/admin — команды"
+            text=f"✅ Бот запущен!\n🌍 Страна: {country}\n/admin - команды"
         )
     except Exception as e:
         logger.warning(f"⚠️ Уведомление: {e}")
     
     logger.info("✅ БОТ ЗАПУЩЕН")
 
-# =====================================================================
-# ЗАПУСК
-# =====================================================================
 if __name__ == "__main__":
     app.post_init = on_startup
     
