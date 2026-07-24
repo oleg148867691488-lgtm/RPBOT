@@ -2,7 +2,7 @@
 COMMANDS.PY — ВСЕ КОМАНДЫ БОТА (ПОЛНАЯ ВЕРСИЯ)
 ===============================================
 Публичные + Админские + Скрытые для тестов.
-Содержит /tension для мировой напряжённости.
+Все тире экранированы для MarkdownV2.
 """
 
 import asyncio
@@ -44,26 +44,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(user_id):
         text = (
             "⚠️ *ДИСКЛЕЙМЕР*\n\n"
-            "Этот бот — игровая историческая симуляция \\(RP\\)\\.\n"
+            "Этот бот \\- игровая историческая симуляция \\(RP\\)\\.\n"
             "Все события вымышлены и происходят в рамках игры\\.\n\n"
             "👑 *Админ\\-панель:*\n"
-            "/country \\[страна\\] — выбрать страну\n"
-            "/year \\[год\\] — установить год\n"
-            "/research \\[страна\\] — исследовать страну\n"
-            "/status — статус бота\n"
-            "/tension — мировая напряжённость\n"
-            "/savechatnews — новостной чат\n"
-            "/savechatwar — военный чат\n"
-            "/savechatoon — чат ООН\n"
-            "/stop — пауза\n"
-            "/start\\_bot — продолжить\n"
-            "/wipe — полный сброс\n"
-            "/admin — все команды для тестов"
+            "/country \\[страна\\] \\- выбрать страну\n"
+            "/year \\[год\\] \\- установить год\n"
+            "/research \\[страна\\] \\- исследовать страну\n"
+            "/status \\- статус бота\n"
+            "/tension \\- мировая напряжённость\n"
+            "/savechatnews \\- новостной чат\n"
+            "/savechatwar \\- военный чат\n"
+            "/savechatoon \\- чат ООН\n"
+            "/stop \\- пауза\n"
+            "/start\\_bot \\- продолжить\n"
+            "/wipe \\- полный сброс\n"
+            "/admin \\- все команды для тестов"
         )
     else:
         text = (
             "⚠️ *ДИСКЛЕЙМЕР*\n\n"
-            "Этот бот — игровая историческая симуляция \\(RP\\)\\.\n"
+            "Этот бот \\- игровая историческая симуляция \\(RP\\)\\.\n"
             "Все события вымышлены и происходят в рамках игры\\.\n\n"
             "🤖 Бот управляет страной автоматически\\.\n"
             "Вы можете влиять через чаты:\n"
@@ -71,8 +71,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• Предлагайте сделки и союзы\n"
             "• Бот сам принимает решения\n\n"
             "📌 Доступные команды:\n"
-            "/start — информация\n"
-            "/tension — мировая напряжённость\n\n"
+            "/start \\- информация\n"
+            "/tension \\- мировая напряжённость\n\n"
             "📌 Бот отвечает когда его тегают \\(@botname\\)"
         )
     
@@ -110,7 +110,7 @@ async def country_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await init_country_economy(user_id, country)
         
         await update.message.reply_text(
-            f"🌍 *{country} — готово\\!*\n\n📊 Профиль: *{profile.profile_type}*\n💪 {profile.bonuses.get('description', '')}\n⚠️ {profile.restrictions.get('description', '')}",
+            f"🌍 *{country} \\- готово\\!*\n\n📊 Профиль: *{profile.profile_type}*\n💪 {profile.bonuses.get('description', '')}\n⚠️ {profile.restrictions.get('description', '')}",
             parse_mode="MarkdownV2"
         )
     except Exception as e:
@@ -270,7 +270,7 @@ async def tension_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Оправдание войны: *{'✅ ДА' if can_justify else '❌ НЕТ'}*\n"
         f"• Вмешательство: *{'✅ ДА' if can_intervene else '❌ НЕТ'}*\n"
         f"• Ядерное оружие: *{'✅ РАЗРЕШЕНО' if can_nukes else '❌ ЗАПРЕЩЕНО'}*\n\n"
-        f"💡 Чем выше напряжённость — тем легче оправдать войну\\!"
+        f"💡 Чем выше напряжённость \\- тем легче оправдать войну\\!"
     )
     
     await update.message.reply_text(text, parse_mode="MarkdownV2")
@@ -287,7 +287,14 @@ async def savechatnews_command(update: Update, context: ContextTypes.DEFAULT_TYP
     saved_chats["news"] = update.message.chat.id
     save_saved_chats(saved_chats)
     
-    await update.message.reply_text("📰 *Новостной чат сохранён\\!*\n\nСюда будут приходить:\n• Новости каждые 15 минут\n• Анализ новостей игроков\n• Ответы на вопросы", parse_mode="MarkdownV2")
+    await update.message.reply_text(
+        "📰 *Новостной чат сохранён\\!*\n\n"
+        "Сюда будут приходить:\n"
+        "• Новости каждые 15 минут\n"
+        "• Анализ новостей игроков\n"
+        "• Ответы на вопросы",
+        parse_mode="MarkdownV2"
+    )
 
 # =====================================================================
 # /SAVECHATWAR — ВОЕННЫЙ ЧАТ (АДМИН)
@@ -301,7 +308,14 @@ async def savechatwar_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     saved_chats["war"] = update.message.chat.id
     save_saved_chats(saved_chats)
     
-    await update.message.reply_text("⚔️ *Военный чат сохранён\\!*\n\nСюда будут приходить:\n• Объявления о войнах\n• Ходы сражений\n• Результаты битв", parse_mode="MarkdownV2")
+    await update.message.reply_text(
+        "⚔️ *Военный чат сохранён\\!*\n\n"
+        "Сюда будут приходить:\n"
+        "• Объявления о войнах\n"
+        "• Ходы сражений\n"
+        "• Результаты битв",
+        parse_mode="MarkdownV2"
+    )
 
 # =====================================================================
 # /SAVECHATOON — ЧАТ ООН (АДМИН)
@@ -315,7 +329,14 @@ async def savechatoon_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     saved_chats["un"] = update.message.chat.id
     save_saved_chats(saved_chats)
     
-    await update.message.reply_text("🏛️ *Чат ООН сохранён\\!*\n\nСюда будут приходить:\n• Резолюции\n• Голосования\n• Санкции и союзы", parse_mode="MarkdownV2")
+    await update.message.reply_text(
+        "🏛️ *Чат ООН сохранён\\!*\n\n"
+        "Сюда будут приходить:\n"
+        "• Резолюции\n"
+        "• Голосования\n"
+        "• Санкции и союзы",
+        parse_mode="MarkdownV2"
+    )
 
 # =====================================================================
 # /STOP — ОСТАНОВИТЬ БОТА (АДМИН)
@@ -329,7 +350,14 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import config
     config.bot_stopped = True
     
-    await update.message.reply_text("🛑 *Бот остановлен\\.*\n\n• Новости не генерируются\n• Решения не принимаются\n• Сообщения игнорируются\n\nДля запуска: `/start\\_bot`", parse_mode="MarkdownV2")
+    await update.message.reply_text(
+        "🛑 *Бот остановлен\\.*\n\n"
+        "• Новости не генерируются\n"
+        "• Решения не принимаются\n"
+        "• Сообщения игнорируются\n\n"
+        "Для запуска: `/start\\_bot`",
+        parse_mode="MarkdownV2"
+    )
 
 # =====================================================================
 # /START_BOT — ЗАПУСТИТЬ БОТА (АДМИН)
@@ -343,7 +371,13 @@ async def start_bot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import config
     config.bot_stopped = False
     
-    await update.message.reply_text("✅ *Бот запущен\\!*\n\n• Новости генерируются\n• Решения принимаются\n• Бот отвечает на сообщения", parse_mode="MarkdownV2")
+    await update.message.reply_text(
+        "✅ *Бот запущен\\!*\n\n"
+        "• Новости генерируются\n"
+        "• Решения принимаются\n"
+        "• Бот отвечает на сообщения",
+        parse_mode="MarkdownV2"
+    )
 
 # =====================================================================
 # /WIPE — ПОЛНЫЙ СБРОС (АДМИН)
@@ -380,7 +414,15 @@ async def wipe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import config
     config.bot_stopped = False
     
-    await update.message.reply_text("🗑️ *ВАЙП ВЫПОЛНЕН\\!*\n\n✅ Всё сброшено\n📌 Используйте:\n`/country \\[страна\\]` — выбрать страну\n`/year \\[год\\]` — установить год\n`/savechatnews` — настроить чаты", parse_mode="MarkdownV2")
+    await update.message.reply_text(
+        "🗑️ *ВАЙП ВЫПОЛНЕН\\!*\n\n"
+        "✅ Всё сброшено\n"
+        "📌 Используйте:\n"
+        "`/country \\[страна\\]` \\- выбрать страну\n"
+        "`/year \\[год\\]` \\- установить год\n"
+        "`/savechatnews` \\- настроить чаты",
+        parse_mode="MarkdownV2"
+    )
 
 # =====================================================================
 # СКРЫТЫЕ АДМИН-КОМАНДЫ ДЛЯ ТЕСТОВ
@@ -391,29 +433,29 @@ async def admin_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     
     text = (
-        "🔧 *АДМИН-ПАНЕЛЬ*\n\n"
+        "🔧 *АДМИН\\-ПАНЕЛЬ*\n\n"
         "*Основные:*\n"
-        "/country \\[страна\\] — выбрать страну\n"
-        "/year \\[год\\] — установить год\n"
-        "/research \\[страна\\] — исследовать\n"
-        "/status — статус бота\n"
-        "/tension — напряжённость\n"
-        "/wipe — полный сброс\n"
-        "/stop \\| /start\\_bot — пауза\n\n"
+        "/country \\[страна\\] \\- выбрать страну\n"
+        "/year \\[год\\] \\- установить год\n"
+        "/research \\[страна\\] \\- исследовать\n"
+        "/status \\- статус бота\n"
+        "/tension \\- напряжённость\n"
+        "/wipe \\- полный сброс\n"
+        "/stop \\| /start\\_bot \\- пауза\n\n"
         "*Тесты:*\n"
-        "/force\\_news — сгенерировать новость\n"
-        "/force\\_decision — цикл решений\n"
-        "/force\\_war \\[стр\\] \\[причина\\] — тест войны\n"
-        "/force\\_peace — завершить войны\n"
-        "/force\\_trade \\[рес\\] \\[кол\\] — продать\n"
-        "/force\\_ally \\[стр\\] — союз\n"
-        "/force\\_sanctions \\[стр\\] — санкции\n\n"
+        "/force\\_news \\- сгенерировать новость\n"
+        "/force\\_decision \\- цикл решений\n"
+        "/force\\_war \\[стр\\] \\[причина\\] \\- тест войны\n"
+        "/force\\_peace \\- завершить войны\n"
+        "/force\\_trade \\[рес\\] \\[кол\\] \\- продать\n"
+        "/force\\_ally \\[стр\\] \\- союз\n"
+        "/force\\_sanctions \\[стр\\] \\- санкции\n\n"
         "*Читы:*\n"
-        "/addmoney \\[сумма\\] — деньги\n"
-        "/setpower \\[0\\-100\\] — сила\n\n"
+        "/addmoney \\[сумма\\] \\- деньги\n"
+        "/setpower \\[0\\-100\\] \\- сила\n\n"
         "*Отладка:*\n"
-        "/debug\\_ai \\[вопрос\\] — спросить ИИ\n"
-        "/debug\\_world — состояние мира"
+        "/debug\\_ai \\[вопрос\\] \\- спросить ИИ\n"
+        "/debug\\_world \\- состояние мира"
     )
     
     await update.message.reply_text(text, parse_mode="MarkdownV2")
@@ -476,7 +518,7 @@ async def force_trade_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         amount = int(args[1])
     except ValueError:
-        await update.message.reply_text("❌ Количество — число")
+        await update.message.reply_text("❌ Количество \\- число")
         return
     
     from economy import PRICES
@@ -543,7 +585,7 @@ async def add_money_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         amount = int(args[0])
     except ValueError:
-        await update.message.reply_text("❌ Сумма — число")
+        await update.message.reply_text("❌ Сумма \\- число")
         return
     
     eco = get_economy(ADMIN_ID)
@@ -564,7 +606,7 @@ async def set_power_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         power = float(args[0])
     except ValueError:
-        await update.message.reply_text("❌ Число 0-100")
+        await update.message.reply_text("❌ Число 0\\-100")
         return
     
     from decision_engine import world
