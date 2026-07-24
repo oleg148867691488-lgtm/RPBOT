@@ -1,8 +1,8 @@
 """
-COMMANDS.PY — ВСЕ КОМАНДЫ БОТА (БЕЗ MARKDOWNV2)
+COMMANDS.PY — ВСЕ КОМАНДЫ БОТА (С РАЗБИВКОЙ)
 ===============================================
-Публичные + Админские + Скрытые для тестов.
-Все сообщения без MarkdownV2 — никаких ошибок с тире.
+Публичные + Админские + Скрытые.
+Все длинные сообщения авто-разбиваются.
 """
 
 import asyncio
@@ -29,6 +29,21 @@ from ai_manager import ai
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
+
+# =====================================================================
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ — ОТПРАВКА С РАЗБИВКОЙ
+# =====================================================================
+
+async def reply_long(update: Update, text: str):
+    """Отправляет длинное сообщение с авто-разбивкой."""
+    if len(text) > 4000:
+        from utils import split_text
+        parts = split_text(text, 3800)
+        for part in parts:
+            await update.message.reply_text(part)
+            await asyncio.sleep(0.5)
+    else:
+        await update.message.reply_text(text)
 
 # =====================================================================
 # /START
@@ -162,15 +177,7 @@ async def research_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         info = await ai.research_country(country)
         summary = info.get("summary", "Информация не найдена")
-        
-        if len(summary) > 4000:
-            from utils import split_text
-            parts = split_text(summary, 3800)
-            for part in parts:
-                await update.message.reply_text(part)
-                await asyncio.sleep(0.5)
-        else:
-            await update.message.reply_text(f"🌍 {country}:\n\n{summary}")
+        await reply_long(update, f"🌍 {country}:\n\n{summary}")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
 
@@ -285,13 +292,7 @@ async def savechatnews_command(update: Update, context: ContextTypes.DEFAULT_TYP
     saved_chats["news"] = update.message.chat.id
     save_saved_chats(saved_chats)
     
-    await update.message.reply_text(
-        "📰 Новостной чат сохранён!\n\n"
-        "Сюда будут приходить:\n"
-        "- Новости каждые 15 минут\n"
-        "- Анализ новостей игроков\n"
-        "- Ответы на вопросы"
-    )
+    await update.message.reply_text("📰 Новостной чат сохранён!")
 
 # =====================================================================
 # /SAVECHATWAR
@@ -305,13 +306,7 @@ async def savechatwar_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     saved_chats["war"] = update.message.chat.id
     save_saved_chats(saved_chats)
     
-    await update.message.reply_text(
-        "⚔️ Военный чат сохранён!\n\n"
-        "Сюда будут приходить:\n"
-        "- Объявления о войнах\n"
-        "- Ходы сражений\n"
-        "- Результаты битв"
-    )
+    await update.message.reply_text("⚔️ Военный чат сохранён!")
 
 # =====================================================================
 # /SAVECHATOON
@@ -325,13 +320,7 @@ async def savechatoon_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     saved_chats["un"] = update.message.chat.id
     save_saved_chats(saved_chats)
     
-    await update.message.reply_text(
-        "🏛️ Чат ООН сохранён!\n\n"
-        "Сюда будут приходить:\n"
-        "- Резолюции\n"
-        "- Голосования\n"
-        "- Санкции и союзы"
-    )
+    await update.message.reply_text("🏛️ Чат ООН сохранён!")
 
 # =====================================================================
 # /STOP
@@ -345,13 +334,7 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import config
     config.bot_stopped = True
     
-    await update.message.reply_text(
-        "🛑 Бот остановлен.\n\n"
-        "- Новости не генерируются\n"
-        "- Решения не принимаются\n"
-        "- Сообщения игнорируются\n\n"
-        "Для запуска: /start_bot"
-    )
+    await update.message.reply_text("🛑 Бот остановлен. /start_bot для запуска.")
 
 # =====================================================================
 # /START_BOT
@@ -365,12 +348,7 @@ async def start_bot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import config
     config.bot_stopped = False
     
-    await update.message.reply_text(
-        "✅ Бот запущен!\n\n"
-        "- Новости генерируются\n"
-        "- Решения принимаются\n"
-        "- Бот отвечает на сообщения"
-    )
+    await update.message.reply_text("✅ Бот запущен!")
 
 # =====================================================================
 # /WIPE
@@ -407,14 +385,7 @@ async def wipe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import config
     config.bot_stopped = False
     
-    await update.message.reply_text(
-        "🗑️ ВАЙП ВЫПОЛНЕН!\n\n"
-        "✅ Всё сброшено\n\n"
-        "Используйте:\n"
-        "/country [страна] - выбрать страну\n"
-        "/year [год] - установить год\n"
-        "/savechatnews - настроить чаты"
-    )
+    await update.message.reply_text("🗑️ ВАЙП ВЫПОЛНЕН!")
 
 # =====================================================================
 # /ADMIN
@@ -463,7 +434,7 @@ async def force_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("🔄 Генерирую...")
     news = await generate_news()
     await send_news_to_chat(context.bot, news)
-    await update.message.reply_text(f"✅ Отправлено:\n\n{news}")
+    await reply_long(update, f"✅ Отправлено:\n\n{news}")
 
 # =====================================================================
 # /FORCE_DECISION
@@ -653,7 +624,7 @@ async def debug_ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤔 Думаю...")
     
     answer = await ai.ask_groq(question, system_prompt=ai.get_rp_system_prompt(), temperature=0.7, max_tokens=500)
-    await update.message.reply_text(f"🤖 {answer}")
+    await reply_long(update, f"🤖 {answer}")
 
 # =====================================================================
 # /DEBUG_WORLD
