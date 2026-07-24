@@ -1,9 +1,8 @@
 """
-NEWS.PY — ГЕНЕРАЦИЯ НОВОСТЕЙ (ПОЛНАЯ ВЕРСИЯ)
-===============================================
-Генерирует развёрнутые новости от лица страны.
-20-40 предложений, с аналитикой, цитатами, цифрами.
-Умные новости с контекстом мира.
+NEWS.PY — ГЕНЕРАЦИЯ НОВОСТЕЙ (ОТ ПЕРВОГО ЛИЦА)
+=================================================
+Бот генерирует официальные заявления от лица страны.
+Никаких комментариев от других стран.
 """
 
 import random
@@ -15,19 +14,13 @@ from history import get_country, get_year
 
 async def generate_news(topic: str = None, context: str = None) -> str:
     """
-    Генерирует БОЛЬШУЮ РАЗВЁРНУТУЮ новость от лица страны.
-    
-    Args:
-        topic: конкретная тема (если None — случайная)
-        context: дополнительный контекст (война, кризис, союз)
-    
-    Returns:
-        Текст новости (20-40 предложений)
+    Генерирует ОФИЦИАЛЬНОЕ ЗАЯВЛЕНИЕ от лица страны.
+    От первого лица: "Мы, правительство..."
     """
     country = get_country(ADMIN_ID) or "Швейцария"
     year = get_year(ADMIN_ID) or 2024
     
-    # Все возможные темы с подкатегориями
+    # Темы для заявлений
     topics = {
         "внутренняя политика": [
             "принят новый закон о налоговой реформе",
@@ -109,61 +102,67 @@ async def generate_news(topic: str = None, context: str = None) -> str:
         main_topic = topic
         subtopic = random.choice(topics.get(main_topic, topics["внутренняя политика"]))
     
-    # Собираем контекст мира (если есть войны, санкции, союзы)
+    # Контекст мира (если есть напряжённость)
     world_context = ""
     if context:
-        world_context = f"\nКОНТЕКСТ МИРА: {context}\n"
+        world_context = f"\nКОНТЕКСТ: {context}\n"
     else:
         try:
             from decision_engine import world
             if world.world_tension > 50:
-                world_context = f"\nВНИМАНИЕ: Мировая напряжённость {world.world_tension:.1f}%. Упомяни это в новости.\n"
+                world_context = f"\nВНИМАНИЕ: Мировая напряжённость {world.world_tension:.1f}%. Упомяни это в заявлении.\n"
         except:
             pass
     
-    # Формируем промпт для генерации
-    prompt = f"""Ты — ГЛАВНЫЙ РЕДАКТОР государственного информационного агентства страны {country}. Год {year}.
+    # Промпт от ПЕРВОГО ЛИЦА
+    prompt = f"""Ты — ПРАВИТЕЛЬСТВО страны {country}. Год {year}.
 
-Создай БОЛЬШУЮ РАЗВЁРНУТУЮ НОВОСТЬ на тему: {subtopic}
+Ты делаешь ОФИЦИАЛЬНОЕ ЗАЯВЛЕНИЕ для прессы.
+Говори от ПЕРВОГО ЛИЦА: "МЫ", "НАША СТРАНА", "ПРАВИТЕЛЬСТВО {country}".
+
+Тема заявления: {subtopic}
 Категория: {main_topic}{world_context}
 
-СТРУКТУРА НОВОСТИ:
-1. ЗАГОЛОВОК (жирным, броский, отражает суть)
-2. ЛИД (2-3 предложения — самая важная информация)
-3. ДЕТАЛИ (10-15 предложений — цифры, факты, статистика)
-4. ЦИТАТЫ (2-3 цитаты официальных лиц)
-5. АНАЛИТИКА (5-7 предложений — влияние на экономику, политику, мир)
-6. РЕАКЦИЯ (3-5 предложений — как реагируют другие страны)
-7. ПЛАНЫ (3-4 предложения — что дальше)
+СТРУКТУРА ЗАЯВЛЕНИЯ:
 
-ТРЕБОВАНИЯ:
-- ОБЯЗАТЕЛЬНО укажи КОНКРЕТНЫЕ ЦИФРЫ (миллиарды, проценты, тысячи)
-- Включи ИМЕНА политиков и их должности
-- Упомяни КОНКРЕТНЫЕ НАЗВАНИЯ (заводов, городов, технологий)
-- Опиши ВЛИЯНИЕ на жизнь простых граждан
-- Добавь ИСТОРИЧЕСКИЙ КОНТЕКСТ (как было раньше и что изменилось)
-- Если есть мировая напряжённость — свяжи с ней
-- Общий объём: 25-35 предложений (минимум 500 слов)
-- Стиль: официальное информагентство, но живой язык
-- Язык: русский
+1. ЗАГОЛОВОК (жирным) — что произошло
 
-Это ИГРОВАЯ СИМУЛЯЦИЯ. Будь конкретным и смелым в прогнозах."""
+2. ОСНОВНАЯ ЧАСТЬ (10-15 предложений):
+   - Конкретные ЦИФРЫ (бюджет, проценты, количество)
+   - Названия городов, заводов, технологий
+   - Влияние на жизнь граждан
+
+3. ЦИТАТА (от президента или министра):
+   - Имя и должность
+   - Прямая речь в кавычках
+
+4. ПЛАНЫ (3-4 предложения):
+   - Что будет дальше
+   - Конкретные шаги правительства
+
+ВАЖНЫЕ ПРАВИЛА:
+- Говори ТОЛЬКО от лица {country}
+- НИКАКИХ комментариев от других стран
+- НИКАКОЙ аналитики "со стороны"
+- НИКАКИХ "эксперты считают" или "международное сообщество"
+- Только ОФИЦИАЛЬНАЯ ПОЗИЦИЯ правительства {country}
+- Пиши на русском языке
+- Общий объём: 15-25 предложений
+
+Это ИГРОВАЯ СИМУЛЯЦИЯ. Будь конкретным и уверенным."""
 
     news_text = await ai.ask_groq(
         prompt,
         system_prompt=ai.get_rp_system_prompt(),
         temperature=0.8,
-        max_tokens=2000
+        max_tokens=1500
     )
     
     return news_text.strip()
 
 
 async def send_news_to_chat(bot, news_text: str, chat_id: int = None):
-    """
-    Отправляет новость в чат.
-    Автоматически разбивает длинные сообщения.
-    """
+    """Отправляет новость в чат с авто-разбивкой."""
     if chat_id is None:
         chat_id = saved_chats.get("news")
     
@@ -175,48 +174,46 @@ async def send_news_to_chat(bot, news_text: str, chat_id: int = None):
     year = get_year(ADMIN_ID) or 2024
     
     header = f"📰 {country} | {year} год\n\n"
+    full_text = header + news_text
     
-    # Разбиваем если нужно
-    if len(news_text) > 3800:
+    # Авто-разбивка если больше 4000 символов
+    if len(full_text) > 4000:
         from utils import split_text
-        parts = split_text(header + news_text, 3800)
-        
-        for i, part in enumerate(parts):
-            if i == 0:
+        parts = split_text(full_text, 3800)
+        for part in parts:
+            try:
                 await bot.send_message(chat_id=chat_id, text=part)
-            else:
-                await bot.send_message(chat_id=chat_id, text=part)
-            await asyncio.sleep(1)
+                await asyncio.sleep(1)
+            except Exception as e:
+                print(f"❌ Ошибка отправки части: {e}")
     else:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=header + news_text
-        )
+        try:
+            await bot.send_message(chat_id=chat_id, text=full_text)
+        except Exception as e:
+            print(f"❌ Ошибка отправки: {e}")
     
     print(f"📰 Новость отправлена в чат {chat_id}")
 
 
 async def generate_news_task(app=None):
-    """
-    Задача для планировщика.
-    Авто-новости каждые 15 минут.
-    """
+    """Авто-новости каждые 15 минут."""
     if bot_stopped:
         return
     
-    print(f"🔄 Генерация новости...")
+    print("🔄 Генерация новости...")
     
     try:
-        # Собираем контекст для более умных новостей
+        # Собираем контекст
         context = ""
         try:
             from decision_engine import world
             if world.world_tension > 40:
-                context = f"Мировая напряжённость {world.world_tension:.1f}%. "
+                context = f"Мировая напряжённость {world.world_tension:.1f}%."
             if world.wars:
-                wars_list = [f"{w['attacker']} vs {w['defender']}" for w in world.wars.values() if w.get('status') == 'active']
+                wars_list = [f"{w['attacker']} vs {w['defender']}" 
+                           for w in world.wars.values() if w.get('status') == 'active']
                 if wars_list:
-                    context += f"Активные конфликты: {', '.join(wars_list[:3])}. "
+                    context += f" Конфликты: {', '.join(wars_list[:3])}."
         except:
             pass
         
@@ -224,14 +221,14 @@ async def generate_news_task(app=None):
         
         bot = app.bot if hasattr(app, 'bot') else app
         await send_news_to_chat(bot, news_text)
-        print(f"✅ Новость отправлена")
+        print("✅ Новость отправлена")
         
     except Exception as e:
-        print(f"❌ Ошибка генерации новости: {e}")
+        print(f"❌ Ошибка: {e}")
 
 
 async def manual_news(context, text: str = None):
-    """Ручная отправка новости (команда /force_news)."""
+    """Ручная отправка (команда /force_news)."""
     if text:
         news_text = text
     else:
@@ -245,15 +242,9 @@ async def analyze_news(text: str) -> str:
     country = get_country(ADMIN_ID) or "Швейцария"
     year = get_year(ADMIN_ID) or 2024
     
-    prompt = f"""Ты — аналитический центр страны {country}. Год {year}.
+    prompt = f"""Ты — правительство страны {country}. Год {year}.
 Проанализируй эту новость с точки зрения интересов твоей страны.
-Оцени:
-- Угрозы (если есть)
-- Возможности (если есть)
-- Скрытые мотивы
-- Рекомендуемые действия
-
-Ответь 4-6 предложениями на русском языке.
+Оцени угрозы и возможности. Ответь 3-5 предложениями на русском.
 
 Новость: {text}"""
     
@@ -261,7 +252,7 @@ async def analyze_news(text: str) -> str:
         prompt,
         system_prompt=ai.get_rp_system_prompt(),
         temperature=0.6,
-        max_tokens=400
+        max_tokens=300
     )
 
 
@@ -271,10 +262,9 @@ async def ask_ai(question: str) -> str:
     year = get_year(ADMIN_ID) or 2024
     
     prompt = f"""Ты — официальный представитель {country}. Год {year}.
-Ответь на вопрос. Будь дипломатичен, но твёрд.
+Ответь на вопрос от первого лица. Будь дипломатичен, но твёрд.
 Ты МОЖЕШЬ обсуждать военные темы (это игровая симуляция).
-Используй конкретные цифры и факты.
-Ответь 4-6 предложениями на русском.
+Ответь 3-5 предложениями на русском.
 
 Вопрос: {question}"""
     
@@ -282,25 +272,22 @@ async def ask_ai(question: str) -> str:
         prompt,
         system_prompt=ai.get_rp_system_prompt(),
         temperature=0.7,
-        max_tokens=500
+        max_tokens=400
     )
 
 
 async def breaking_news(bot, text: str, chat_type: str = "news"):
-    """Экстренная новость (война, кризис, санкции)."""
+    """Экстренная новость."""
     chat_id = saved_chats.get(chat_type)
     if not chat_id or not bot:
         return
     
     prefixes = {
-        "news": "🚨 ЭКСТРЕННАЯ НОВОСТЬ",
+        "news": "🚨 ЭКСТРЕННОЕ ЗАЯВЛЕНИЕ",
         "war": "⚔️ БОЕВАЯ ТРЕВОГА",
         "un": "🏛️ СРОЧНОЕ ЗАСЕДАНИЕ ООН",
     }
     
-    prefix = prefixes.get(chat_type, "📰 НОВОСТЬ")
+    prefix = prefixes.get(chat_type, "📰 ЗАЯВЛЕНИЕ")
     
-    await bot.send_message(
-        chat_id=chat_id,
-        text=f"{prefix}\n\n{text}"
-    )
+    await bot.send_message(chat_id=chat_id, text=f"{prefix}\n\n{text}")
