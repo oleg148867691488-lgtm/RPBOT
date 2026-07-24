@@ -2,7 +2,7 @@
 BOT.PY — RP БОТ ДЛЯ RENDER (ФИНАЛ)
 =====================================
 Автономная страна с ИИ (Iron Man режим).
-Исправлен для Python 3.14 + Render.
+python-telegram-bot v22 + Python 3.14.
 """
 
 import asyncio
@@ -159,9 +159,11 @@ async def on_startup():
     
     logger.info("✅ БОТ ЗАПУЩЕН")
 
+# =====================================================================
+# ЗАПУСК
+# =====================================================================
 if __name__ == "__main__":
-    async def post_init():
-        await on_startup()
+    app.post_init = on_startup
     
     port = int(os.environ.get("PORT", "8080"))
     webhook_url = os.environ.get("WEBHOOK_URL", None)
@@ -172,12 +174,8 @@ if __name__ == "__main__":
             listen="0.0.0.0",
             port=port,
             webhook_url=webhook_url,
-            drop_pending_updates=True,
-            post_init=post_init
+            drop_pending_updates=True
         )
     else:
         logger.info("🔄 Поллинг")
-        app.run_polling(
-            drop_pending_updates=True,
-            post_init=post_init
-        )
+        app.run_polling(drop_pending_updates=True)
