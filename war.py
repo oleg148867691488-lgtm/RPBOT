@@ -3,23 +3,10 @@ import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
 from config import ADMIN_ID
-from history import get_country, get_year, save_dialog, get_dialog_history
+from history import get_country, get_year
 
 # === ХРАНИЛИЩЕ АКТИВНЫХ ВОЙН ===
 active_wars = {}
-
-# === СТРУКТУРА ВОЙНЫ ===
-# {
-#   "war_id": {
-#       "attacker": "Германия",
-#       "defender": "Россия",
-#       "start_date": "2026-07-24",
-#       "status": "preparing",  # preparing, active, ended
-#       "turns": 0,
-#       "attacker_losses": 0,
-#       "defender_losses": 0
-#   }
-# }
 
 # === ОБЪЯВЛЕНИЕ ВОЙНЫ ===
 async def declare_war_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -55,46 +42,128 @@ async def declare_war_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         "defender": defender,
         "reason": reason,
         "year": year,
-        "status": "preparing",
+        "status": "waiting_for_response",  # Ожидание ответа
         "turns": 0,
         "attacker_losses": 0,
         "defender_losses": 0,
         "attacker_army": random.randint(50, 100) * 1000,
-        "defender_army": random.randint(30, 80) * 1000
+        "defender_army": random.randint(30, 80) * 1000,
+        "responded": False,
+        "strategy": None,
+        "chat_id": update.message.chat.id
     }
 
     await update.message.reply_text(
         f"⚔️ *{attacker} объявляет войну {defender}!*\n\n"
         f"📌 Причина: {reason}\n"
         f"📅 Год: {year}\n"
-        f"🔄 Статус: Подготовка (4 месяца)\n"
-        f"⏳ Война начнётся через 8 часов."
+        f"⏳ У {defender} есть 30 минут, чтобы ответить.\n"
+        f"📝 Напишите /respond [согласиться/отказаться]"
     )
 
-    # Запускаем таймер подготовки
-    asyncio.create_task(war_preparation(war_id, update, context))
+    # Запускаем таймер ответа (30 минут)
+    asyncio.create_task(war_response_timer(war_id, context))
 
-# === ПОДГОТОВКА К ВОЙНЕ (4 МЕСЯЦА = 8 ЧАСОВ) ===
-async def war_preparation(war_id: str, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.sleep(8 * 60 * 60)  # 8 часов
+# === ТАЙМЕР ОТВЕТА (30 МИНУТ) ===
+async def war_response_timer(war_id: str, context: ContextTypes.DEFAULT_TYPE):
+    await asyncio.sleep(30 * 60)  # 30 минут
     
     if war_id not in active_wars:
         return
     
     war = active_wars[war_id]
-    war["status"] = "active"
     
-    await update.message.reply_text(
-        f"⚔️ *Война началась!*\n\n"
-        f"{war['attacker']} атакует {war['defender']}.\n"
-        f"📊 Силы: {war['attacker']} — {war['attacker_army']:,} солдат, {war['defender']} — {war['defender_army']:,} солдат."
-    )
-    
-    # Запускаем цикл войны
-    asyncio.create_task(war_loop(war_id, update, context))
+    # Если игрок не ответил — бот принимает решение сам
+    if not war["responded"]:
+        # Бот выбирает стратегию на основе силы
+        if war["defender_army"] > war["attacker_army"] * 1.5:
+            strategy = "оборона"
+        else:
+            strategy = "наступление"
+        
+        war["strategy"] = strategy
+        war["status"] = "active"
+        
+        await context.bot.send_message(
+            chat_id=war["chat_id"],
+            text=(
+                f"⏳ *{war['defender']} не ответил!*\n\n"
+                f"🤖 Бот выбрал стратегию: *{strategy}*\n"
+                f"⚔️ Война начинается!"
+            )
+        )
+        
+        # Запускаем войну
+        asyncio.create_task(war_loop(war_id, context))
 
-# === ЦИКЛ ВОЙНЫ (ХОДЫ) ===
-async def war_loop(war_id: str, update: Update, context: ContextTypes.DEFAULT_TYPE):
+# === ОТВЕТ НА ВОЙНУ ===
+async def respond_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    args = context.args
+    
+    if not args:
+        await update.message.reply_text("❌ Используйте: /respond [согласиться/отказаться]")
+        return
+    
+    action = args[0].lower()
+    country = get_country(user_id) or "Швейцария"
+    
+    # Ищем войну, где страна является защитником
+    for war_id, war in active_wars.items():
+        if war["defender"] == country and war["status"] == "waiting_for_response":
+            war["responded"] = True
+            
+            if action == "согласиться":
+                war["status"] = "active"
+                war["strategy"] = "оборона"
+                await update.message.reply_text(
+                    f"⚔️ *{country} принимает вызов!*\n\n"
+                    f"Война начинается!\n"
+                    f"Стратегия по умолчанию: оборона.\n"
+                    f"Изменить: /strategy [наступление/оборона/партизаны]"
+                )
+                asyncio.create_task(war_loop(war_id, context))
+                return
+            
+            elif action == "отказаться":
+                del active_wars[war_id]
+                await update.message.reply_text(
+                    f"🕊️ *{country} отказалась от войны.*\n\n"
+                    f"Конфликт предотвращён."
+                )
+                return
+    
+    await update.message.reply_text("❌ Нет активных запросов на войну для вашей страны.")
+
+# === СМЕНА СТРАТЕГИИ ===
+async def strategy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    args = context.args
+    
+    if not args:
+        await update.message.reply_text("❌ Используйте: /strategy [наступление/оборона/партизаны]")
+        return
+    
+    strategy = args[0].lower()
+    if strategy not in ["наступление", "оборона", "партизаны"]:
+        await update.message.reply_text("❌ Доступные стратегии: наступление, оборона, партизаны")
+        return
+    
+    country = get_country(user_id) or "Швейцария"
+    
+    for war in active_wars.values():
+        if war["attacker"] == country or war["defender"] == country:
+            if war["status"] != "active":
+                await update.message.reply_text("❌ Война ещё не началась.")
+                return
+            war["strategy"] = strategy
+            await update.message.reply_text(f"✅ Стратегия изменена на: *{strategy}*")
+            return
+    
+    await update.message.reply_text("❌ Ваша страна не участвует в войне.")
+
+# === ЦИКЛ ВОЙНЫ ===
+async def war_loop(war_id: str, context: ContextTypes.DEFAULT_TYPE):
     while war_id in active_wars:
         war = active_wars[war_id]
         if war["status"] != "active":
@@ -102,11 +171,11 @@ async def war_loop(war_id: str, update: Update, context: ContextTypes.DEFAULT_TY
         
         # Делаем ход
         result = await make_war_turn(war)
-        await update.message.reply_text(result)
+        await context.bot.send_message(chat_id=war["chat_id"], text=result)
         
         # Проверяем, не закончилась ли война
         if war["attacker_army"] < 10000 or war["defender_army"] < 10000:
-            await end_war(war_id, update, context)
+            await end_war(war_id, context)
             break
         
         # Ждём 1 игровой день (4 минуты реального времени)
@@ -116,14 +185,22 @@ async def war_loop(war_id: str, update: Update, context: ContextTypes.DEFAULT_TY
 async def make_war_turn(war: dict) -> str:
     attacker = war["attacker"]
     defender = war["defender"]
+    strategy = war.get("strategy", "наступление")
     
-    # Расчёт силы
-    attack_power = war["attacker_army"] * (0.6 + random.random() * 0.2)
-    defense_power = war["defender_army"] * (0.5 + random.random() * 0.3)
+    # Модификаторы стратегии
+    modifiers = {
+        "наступление": {"attack": 1.2, "defense": 0.8},
+        "оборона": {"attack": 0.7, "defense": 1.3},
+        "партизаны": {"attack": 0.9, "defense": 1.1}
+    }
+    mod = modifiers.get(strategy, {"attack": 1.0, "defense": 1.0})
+    
+    # Расчёт силы с учётом стратегии
+    attack_power = war["attacker_army"] * mod["attack"] * (0.6 + random.random() * 0.2)
+    defense_power = war["defender_army"] * mod["defense"] * (0.5 + random.random() * 0.3)
     
     # Определяем результат
     if attack_power > defense_power * 1.2:
-        # Атакующий побеждает
         loss_ratio = 0.1 + random.random() * 0.15
         attacker_losses = int(war["attacker_army"] * loss_ratio)
         defender_losses = int(war["defender_army"] * (0.2 + random.random() * 0.2))
@@ -139,7 +216,6 @@ async def make_war_turn(war: dict) -> str:
             f"💪 Осталось: {attacker} — {war['attacker_army']:,}, {defender} — {war['defender_army']:,}"
         )
     elif defense_power > attack_power * 1.2:
-        # Защитник побеждает
         loss_ratio = 0.1 + random.random() * 0.15
         attacker_losses = int(war["attacker_army"] * (0.2 + random.random() * 0.2))
         defender_losses = int(war["defender_army"] * loss_ratio)
@@ -155,7 +231,6 @@ async def make_war_turn(war: dict) -> str:
             f"💪 Осталось: {attacker} — {war['attacker_army']:,}, {defender} — {war['defender_army']:,}"
         )
     else:
-        # Ничья
         loss_ratio = 0.05 + random.random() * 0.1
         attacker_losses = int(war["attacker_army"] * loss_ratio)
         defender_losses = int(war["defender_army"] * loss_ratio)
@@ -172,7 +247,7 @@ async def make_war_turn(war: dict) -> str:
         )
 
 # === ЗАВЕРШЕНИЕ ВОЙНЫ ===
-async def end_war(war_id: str, update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def end_war(war_id: str, context: ContextTypes.DEFAULT_TYPE):
     if war_id not in active_wars:
         return
     
@@ -187,14 +262,16 @@ async def end_war(war_id: str, update: Update, context: ContextTypes.DEFAULT_TYP
         winner = war["defender"]
         loser = war["attacker"]
     
-    await update.message.reply_text(
-        f"🏁 *Война завершена!*\n\n"
-        f"👑 Победитель: {winner}\n"
-        f"💀 Потери: {war['attacker']} — {war['attacker_losses']:,}, {war['defender']} — {war['defender_losses']:,}\n"
-        f"⚔️ Итог: {loser} признаёт поражение."
+    await context.bot.send_message(
+        chat_id=war["chat_id"],
+        text=(
+            f"🏁 *Война завершена!*\n\n"
+            f"👑 Победитель: {winner}\n"
+            f"💀 Потери: {war['attacker']} — {war['attacker_losses']:,}, {war['defender']} — {war['defender_losses']:,}\n"
+            f"⚔️ Итог: {loser} признаёт поражение."
+        )
     )
     
-    # Удаляем войну из активных
     del active_wars[war_id]
 
 # === СТАТУС ВОЙНЫ ===
@@ -202,7 +279,6 @@ async def war_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = update.message.from_user.id
     country = get_country(user_id) or "Швейцария"
     
-    # Ищем войну, в которой участвует страна
     for war in active_wars.values():
         if war["attacker"] == country or war["defender"] == country:
             await update.message.reply_text(
@@ -219,13 +295,8 @@ async def war_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # === ЗАПРОС МИРА ===
 async def peace_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Доступ запрещён.")
-        return
-
     country = get_country(user_id) or "Швейцария"
     
-    # Ищем войну, где страна является участником
     for war_id, war in active_wars.items():
         if war["attacker"] == country or war["defender"] == country:
             war["status"] = "ended"
