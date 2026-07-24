@@ -3,7 +3,7 @@ BOT.PY — RP БОТ ДЛЯ RENDER (ФИНАЛ)
 =====================================
 Автономная страна с ИИ (Iron Man режим).
 python-telegram-bot v22 + Python 3.14.
-Без MarkdownV2 в уведомлениях.
+Исправлен event loop для Python 3.14.
 """
 
 import asyncio
@@ -135,12 +135,12 @@ async def on_startup(app=None):
     try:
         scheduler = AsyncIOScheduler()
         scheduler.add_job(
-            lambda: asyncio.create_task(generate_news_task(app)),
+            lambda: asyncio.ensure_future(generate_news_task(app)),
             trigger=IntervalTrigger(minutes=NEWS_INTERVAL_MINUTES),
             id="news_job", replace_existing=True
         )
         scheduler.add_job(
-            lambda: asyncio.create_task(decision_loop(app)),
+            lambda: asyncio.ensure_future(decision_loop(app)),
             trigger=IntervalTrigger(minutes=DECISION_INTERVAL_MINUTES),
             id="decision_job", replace_existing=True
         )
