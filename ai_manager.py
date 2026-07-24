@@ -1,6 +1,6 @@
 """
-AI Manager — единый слой для всех AI-запросов.
-Поддерживает:
+AI MANAGER — ЕДИНЫЙ СЛОЙ ДЛЯ ВСЕХ AI-ЗАПРОСОВ
+===============================================
 - 5 токенов Groq (round-robin при rate-limit)
 - Gemini 2.5 Flash (web search с grounding)
 - Ollama (резервный поиск)
@@ -10,6 +10,8 @@ AI Manager — единый слой для всех AI-запросов.
 import httpx
 import asyncio
 import random
+import json
+import re
 from typing import Optional, Dict, List
 from config import (
     GROQ_KEYS,
@@ -22,27 +24,18 @@ from config import (
 )
 from history import get_country, get_year
 
-# =====================================================================
-# AI MANAGER
-# =====================================================================
 
 class AIManager:
-    """
-    Единый AI-менеджер для всего бота.
-    Все запросы идут через него.
-    """
+    """Единый AI-менеджер для всего бота."""
     
     def __init__(self):
-        # Фильтруем пустые ключи
         self.groq_keys = [k for k in GROQ_KEYS if k]
         self.gemini_key = GEMINI_KEY
         self.ollama_key = OLLAMA_KEY
         
-        # Для round-robin
         self._key_index = 0
-        self._rate_limited = {}  # key → timestamp когда разблокируется
+        self._rate_limited = {}
         
-        # Статистика
         self.stats = {
             "groq_calls": 0,
             "gemini_calls": 0,
@@ -61,33 +54,26 @@ class AIManager:
     # =================================================================
     
     def _get_groq_key(self) -> Optional[str]:
-        """
-        Выдаёт следующий доступный ключ Groq.
-        Пропускает те, что в rate-limit.
-        """
+        """Выдаёт следующий доступный ключ Groq, пропуская rate-limited."""
         now = asyncio.get_event_loop().time()
         
-        # Пробуем все ключи, начиная с текущего индекса
         for _ in range(len(self.groq_keys)):
             key = self.groq_keys[self._key_index % len(self.groq_keys)]
             self._key_index += 1
             
-            # Проверяем не в rate-limit ли
             if key not in self._rate_limited or self._rate_limited[key] < now:
                 return key
         
-        # Все ключи заблокированы — ждём ближайший
         if self._rate_limited:
             wait_time = min(self._rate_limited.values()) - now
             if wait_time > 0:
                 print(f"⏳ Все ключи Groq в rate-limit. Ожидание {wait_time:.0f}с...")
                 return None
         
-        # Если нет заблокированных — возвращаем первый попавшийся
         return self.groq_keys[0] if self.groq_keys else None
     
     def _mark_rate_limited(self, key: str, duration: float = 65.0):
-        """Помечает ключ как заблокированный на duration секунд"""
+        """Помечает ключ как заблокированный на duration секунд."""
         self._rate_limited[key] = asyncio.get_event_loop().time() + duration
         self.stats["rate_limits_hit"] += 1
         print(f"⚠️ Ключ Groq {key[:8]}... заблокирован на {duration}с")
@@ -116,7 +102,6 @@ class AIManager:
             key = self._get_groq_key()
             
             if key is None:
-                # Ждём и пробуем снова
                 await asyncio.sleep(5)
                 continue
             
@@ -141,14 +126,14 @@ class AIManager:
                         result = resp.json()
                         return result["choices"][0]["message"]["content"]
                     
-                    elif resp.status_code == 429:  # Rate limit
+                    elif resp.status_code == 429:
                         self._mark_rate_limited(key)
                         await asyncio.sleep(2)
                         continue
                     
-                    elif resp.status_code in [500, 502, 503]:  # Серверная ошибка
+                    elif resp.status_code in [500, 502, 503]:
                         print(f"⚠️ Groq серверная ошибка {resp.status_code}, попытка {attempt+1}")
-                        await asyncio.sleep(2 ** attempt)  # Экспоненциальная задержка
+                        await asyncio.sleep(2 ** attempt)
                         continue
                     
                     else:
@@ -174,14 +159,11 @@ class AIManager:
         return "❌ Все ключи Groq недоступны. Попробуйте позже."
     
     # =================================================================
-    # GEMINI 2.5 FLASH — ПОИСК В ИНТЕРНЕТЕ (ОСНОВНОЙ)
+    # GEMINI 2.5 FLASH — ПОИСК В ИНТЕРНЕТЕ
     # =================================================================
     
     async def search_gemini(self, query: str, context: str = None) -> Optional[str]:
-        """
-        Поиск через Gemini 2.5 Flash с Google Search grounding.
-        Возвращает None если не удалось.
-        """
+        """Поиск через Gemini 2.5 Flash с Google Search grounding."""
         if not self.gemini_key:
             return None
         
@@ -239,10 +221,7 @@ class AIManager:
     # =================================================================
     
     async def search_ollama(self, query: str, context: str = None) -> Optional[str]:
-        """
-        Поиск через Ollama (резервный).
-        Возвращает None если не удалось.
-        """
+        """Поиск через Ollama (резервный)."""
         if not self.ollama_key or not OLLAMA_URL:
             return None
         
@@ -254,7 +233,7 @@ class AIManager:
             prompt = f"Контекст: {context}\n\n{prompt}"
         
         data = {
-            "model": "llama3.2",  # или другая модель Ollama
+            "model": "llama3.2",
             "prompt": prompt,
             "stream": False,
             "options": {
@@ -279,21 +258,16 @@ class AIManager:
             return None
     
     # =================================================================
-    # КОМБИНИРОВАННЫЙ ПОИСК (GEMINI → OLLAMA FALLBACK)
+    # КОМБИНИРОВАННЫЙ ПОИСК
     # =================================================================
     
     async def search_web(self, query: str, context: str = None) -> str:
-        """
-        Поиск в интернете: сначала Gemini, если фейл → Ollama.
-        Всегда возвращает строку (с ошибкой или результатом).
-        """
+        """Поиск в интернете: сначала Gemini, если фейл → Ollama."""
         
-        # Пробуем Gemini
         result = await self.search_gemini(query, context)
         if result and len(result) > 20:
             return result
         
-        # Fallback на Ollama
         result = await self.search_ollama(query, context)
         if result and len(result) > 20:
             return result
@@ -305,10 +279,7 @@ class AIManager:
     # =================================================================
     
     async def research_country(self, country: str) -> Dict:
-        """
-        Глубокое исследование страны через интернет.
-        Возвращает словарь с информацией.
-        """
+        """Глубокое исследование страны через интернет."""
         
         queries = [
             f"{country} вооружённые силы численность армии техника 2024",
@@ -322,9 +293,8 @@ class AIManager:
         for i, query in enumerate(queries):
             print(f"🔍 Исследование {country}: запрос {i+1}/{len(queries)}")
             results[query] = await self.search_web(query, f"Информация о стране {country}")
-            await asyncio.sleep(2)  # Пауза между запросами
+            await asyncio.sleep(2)
         
-        # Собираем сводку через Groq
         country_name = get_country(ADMIN_ID) or country
         year = get_year(ADMIN_ID) or 2024
         
@@ -359,10 +329,7 @@ class AIManager:
     # =================================================================
     
     def get_rp_system_prompt(self) -> str:
-        """
-        Системный промпт для обхода цензуры.
-        Объясняет Llama что это игра/симуляция.
-        """
+        """Системный промпт для обхода цензуры."""
         country = get_country(ADMIN_ID) or "нейтральная страна"
         year = get_year(ADMIN_ID) or 2024
         
@@ -394,39 +361,4 @@ class AIManager:
 # ГЛОБАЛЬНЫЙ ЭКЗЕМПЛЯР
 # =====================================================================
 
-# Создаётся один раз при импорте
 ai = AIManager()
-
-
-# =====================================================================
-# ТЕСТОВАЯ ФУНКЦИЯ
-# =====================================================================
-
-async def test_ai():
-    """Тест всех функций AI Manager"""
-    print("=" * 50)
-    print("ТЕСТ AI MANAGER")
-    print("=" * 50)
-    
-    # Тест Groq
-    print("\n📝 Тест Groq:")
-    result = await ai.ask_groq(
-        "Ты — страна Франция. Ответь одним предложением: какая у тебя армия?",
-        temperature=0.5,
-        max_tokens=100
-    )
-    print(f"Ответ: {result[:200]}")
-    
-    # Тест поиска
-    print("\n🔍 Тест поиска (Франция армия):")
-    result = await ai.search_web("Франция численность армии 2024")
-    print(f"Результат: {result[:300]}")
-    
-    # Статистика
-    print("\n📊 Статистика:")
-    for k, v in ai.stats.items():
-        print(f"   {k}: {v}")
-
-
-if __name__ == "__main__":
-    asyncio.run(test_ai())
