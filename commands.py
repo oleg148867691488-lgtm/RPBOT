@@ -1,6 +1,6 @@
 """
-COMMANDS.PY — ВСЕ КОМАНДЫ БОТА
-===============================
+COMMANDS.PY — ВСЕ КОМАНДЫ БОТА (ПОЛНАЯ ВЕРСИЯ)
+===============================================
 Публичные + Админские + Скрытые для тестов.
 Содержит /tension для мировой напряжённости.
 """
@@ -262,7 +262,7 @@ async def tension_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = (
         f"{color} *МИРОВАЯ НАПРЯЖЁННОСТЬ*\n\n"
-        f"\[{bar}\] *{tension:.1f}%*\n"
+        fr"\[{bar}\] *{tension:.1f}%*\n"
         f"{trend_emoji} Тренд: *{trend}*\n\n"
         f"📊 Статус: *{world_status}*\n"
         f"📝 {description}\n\n"
