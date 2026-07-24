@@ -114,7 +114,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 app.add_error_handler(error_handler)
 
-async def on_startup():
+async def on_startup(app=None):
     logger.info("=" * 50)
     logger.info("🚀 ЗАПУСК RP-БОТА")
     logger.info("=" * 50)
