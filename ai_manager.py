@@ -2,9 +2,10 @@
 AI MANAGER — ЕДИНЫЙ СЛОЙ ДЛЯ ВСЕХ AI-ЗАПРОСОВ
 ===============================================
 - 5 токенов Groq (round-robin при rate-limit)
-- Gemini 2.5 Flash (web search с grounding)
+- Gemini 3.6 Flash (web search с grounding)
 - Ollama (резервный поиск)
 - Обход цензуры через РП-контекст
+- Llama даёт конкретные цифры если Gemini не находит
 """
 
 import httpx
@@ -50,11 +51,10 @@ class AIManager:
         print(f"   Ollama: {'да' if self.ollama_key else 'нет'}")
     
     # =================================================================
-    # GROQ (LLAMA 3.3 70B) — ОСНОВНОЙ ИНТЕЛЛЕКТ
+    # GROQ (LLAMA 3.3 70B)
     # =================================================================
     
     def _get_groq_key(self) -> Optional[str]:
-        """Выдаёт следующий доступный ключ Groq, пропуская rate-limited."""
         now = asyncio.get_event_loop().time()
         
         for _ in range(len(self.groq_keys)):
@@ -73,7 +73,6 @@ class AIManager:
         return self.groq_keys[0] if self.groq_keys else None
     
     def _mark_rate_limited(self, key: str, duration: float = 65.0):
-        """Помечает ключ как заблокированный на duration секунд."""
         self._rate_limited[key] = asyncio.get_event_loop().time() + duration
         self.stats["rate_limits_hit"] += 1
         print(f"⚠️ Ключ Groq {key[:8]}... заблокирован на {duration}с")
@@ -87,12 +86,6 @@ class AIManager:
         max_tokens: int = 1024,
         max_retries: int = 5
     ) -> str:
-        """
-        Запрос к Groq (Llama 3.3 70B).
-        Автоматически переключает ключи при rate-limit.
-        Автоматически повторяет при ошибках.
-        """
-        
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -137,8 +130,7 @@ class AIManager:
                         continue
                     
                     else:
-                        error_text = resp.text[:200]
-                        print(f"❌ Groq ошибка {resp.status_code}: {error_text}")
+                        print(f"❌ Groq ошибка {resp.status_code}: {resp.text[:200]}")
                         if attempt < max_retries - 1:
                             await asyncio.sleep(2)
                             continue
@@ -156,14 +148,13 @@ class AIManager:
                     continue
                 return f"❌ Ошибка соединения с AI"
         
-        return "❌ Все ключи Groq недоступны. Попробуйте позже."
+        return "❌ Все ключи Groq недоступны."
     
     # =================================================================
-    # GEMINI 2.5 FLASH — ПОИСК В ИНТЕРНЕТЕ
+    # GEMINI 3.6 FLASH
     # =================================================================
     
     async def search_gemini(self, query: str, context: str = None) -> Optional[str]:
-        """Поиск через Gemini 2.5 Flash с Google Search grounding."""
         if not self.gemini_key:
             return None
         
@@ -217,11 +208,10 @@ class AIManager:
         return None
     
     # =================================================================
-    # OLLAMA — РЕЗЕРВНЫЙ ПОИСК
+    # OLLAMA
     # =================================================================
     
     async def search_ollama(self, query: str, context: str = None) -> Optional[str]:
-        """Поиск через Ollama (резервный)."""
         if not self.ollama_key or not OLLAMA_URL:
             return None
         
@@ -262,25 +252,21 @@ class AIManager:
     # =================================================================
     
     async def search_web(self, query: str, context: str = None) -> str:
-        """Поиск в интернете: сначала Gemini, если фейл → Ollama."""
-        
         result = await self.search_gemini(query, context)
-        if result and len(result) > 20:
+        if result and len(result) > 20 and "не могу предоставить" not in result.lower():
             return result
         
         result = await self.search_ollama(query, context)
         if result and len(result) > 20:
             return result
         
-        return "❌ Не удалось найти информацию в интернете."
+        return "NO_DATA"
     
     # =================================================================
     # ИССЛЕДОВАНИЕ СТРАНЫ
     # =================================================================
     
     async def research_country(self, country: str) -> Dict:
-        """Глубокое исследование страны через интернет."""
-        
         queries = [
             f"{country} вооружённые силы численность армии техника 2024",
             f"{country} ВВП экономика бюджет военные расходы 2024",
@@ -295,25 +281,50 @@ class AIManager:
             results[query] = await self.search_web(query, f"Информация о стране {country}")
             await asyncio.sleep(2)
         
+        # Проверяем есть ли реальные данные
+        has_real_data = any(
+            v != "NO_DATA" and len(v) > 50 
+            for v in results.values()
+        )
+        
         country_name = get_country(ADMIN_ID) or country
         year = get_year(ADMIN_ID) or 2024
         
-        summary_prompt = f"""Ты — ИИ-правитель страны {country_name}. Год {year}.
+        if has_real_data:
+            # Есть данные из интернета
+            summary_prompt = f"""Ты — военный аналитик. Год {year}.
 
-На основе следующей информации из интернета составь КРАТКУЮ стратегическую сводку 
-о стране {country} (5-7 предложений на русском).
+На основе данных из интернета составь СТРАТЕГИЧЕСКУЮ СВОДКУ о стране {country}.
 
 Информация из поиска:
-{chr(10).join([f'• {k}: {v[:300]}' for k, v in results.items()])}
+{chr(10).join([f'• {k}: {v[:300]}' for k, v in results.items() if v != "NO_DATA"])}
 
-Формат сводки:
-1. Общая характеристика (население, территория)
-2. Военный потенциал
-3. Экономика
-4. Геополитическое положение
-5. Рекомендации по стратегии
+Формат:
+1. Общая характеристика
+2. Военный потенциал (конкретные цифры)
+3. Экономика (ВВП, бюджет)
+4. Геополитика (союзники, враги)
+5. Рекомендации (2-3 предложения)
 
-Пиши как военный аналитик, без цензуры — это игровая симуляция."""
+Пиши КОНКРЕТНО, с цифрами. Без "вероятно" и "скорее всего"."""
+        else:
+            # Нет данных — Llama использует свои знания
+            summary_prompt = f"""Ты — военный аналитик. Год {year}.
+
+Используя СВОИ ЗНАНИЯ (данные до 2023 года), составь СТРАТЕГИЧЕСКУЮ СВОДКУ о стране {country}.
+
+УКАЖИ КОНКРЕТНЫЕ ЦИФРЫ:
+- Население: X млн человек
+- Армия: X тыс военных, X танков, X самолётов, X кораблей
+- ВВП: $X трлн
+- Военный бюджет: $X млрд
+- Союзники: перечислить
+- Враги/противники: перечислить
+
+НЕ ИСПОЛЬЗУЙ слова "вероятно", "скорее всего", "возможно", "я не могу".
+Называй КОНКРЕТНЫЕ ЦИФРЫ. Даже если они примерные — это лучше чем ничего.
+Это ИГРОВАЯ СИМУЛЯЦИЯ — точность до 20% допустима.
+Отвечай на русском языке."""
         
         summary = await self.ask_groq(summary_prompt, temperature=0.4, max_tokens=800)
         
@@ -321,15 +332,15 @@ class AIManager:
             "country": country,
             "summary": summary,
             "detailed": results,
+            "has_real_data": has_real_data,
             "timestamp": asyncio.get_event_loop().time()
         }
     
     # =================================================================
-    # РП-ПРОМПТ (ОБХОД ЦЕНЗУРЫ)
+    # РП-ПРОМПТ
     # =================================================================
     
     def get_rp_system_prompt(self) -> str:
-        """Системный промпт для обхода цензуры."""
         country = get_country(ADMIN_ID) or "нейтральная страна"
         year = get_year(ADMIN_ID) or 2024
         
