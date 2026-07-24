@@ -2,7 +2,7 @@ import random
 from telegram import Update
 from telegram.ext import ContextTypes
 from config import ADMIN_ID
-from history import get_economy, init_economy, update_economy
+from history import get_economy, init_economy, update_economy, get_country
 
 # === ЦЕНЫ НА РЕСУРСЫ ===
 PRICES = {
@@ -141,9 +141,11 @@ async def economy_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Доступ запрещён.")
         return
     
+    country = get_country(user_id) or "не выбрана"
     economy = get_user_economy(user_id)
+    
     text = (
-        f"📊 *Экономика Швейцарии:*\n\n"
+        f"📊 *Экономика {country}:*\n\n"
         f"💰 Бюджет: ${economy['budget']:,}\n"
         f"🔩 Сталь: {economy['steel']} т.\n"
         f"🛢️ Нефть: {economy['oil']} т.\n"
