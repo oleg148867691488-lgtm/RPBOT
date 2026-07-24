@@ -1,107 +1,330 @@
-import httpx
+"""
+NEWS.PY — ГЕНЕРАЦИЯ И ОТПРАВКА НОВОСТЕЙ
+=========================================
+Новости каждые 15 минут (8 за 2 игровых месяца).
+Интегрировано с ai_manager и decision_engine.
+"""
+
 import random
-from config import GROQ_API_KEY, GROQ_URL, ADMIN_ID, bot_stopped
+import asyncio
+from ai_manager import ai
+from config import ADMIN_ID, bot_stopped, saved_chats
 from history import get_country, get_year
 
-# === ГЕНЕРАЦИЯ НОВОСТИ ЧЕРЕЗ ИИ ===
-async def generate_news():
+# =====================================================================
+# ГЕНЕРАЦИЯ НОВОСТИ
+# =====================================================================
+
+async def generate_news(topic: str = None) -> str:
+    """
+    Генерирует новость от лица страны через Groq.
+    
+    Args:
+        topic: конкретная тема (если None — случайная)
+    
+    Returns:
+        Текст новости
+    """
     country = get_country(ADMIN_ID) or "Швейцария"
-    year = get_year(ADMIN_ID) or 2022
-
+    year = get_year(ADMIN_ID) or 2024
+    
+    # Темы новостей
+    topics = [
+        "политика и внутренние дела",
+        "экономика и торговля",
+        "армия и военные учения",
+        "международные отношения",
+        "технологии и наука",
+        "дипломатия и переговоры",
+        "инфраструктура и строительство",
+        "культура и общество",
+    ]
+    
+    if topic is None:
+        topic = random.choice(topics)
+    
     prompt = (
-        f"Ты — {country} в {year} году. Придумай краткую новость от лица страны. "
-        f"Новость должна быть на русском, 2-3 предложения. "
-        f"Тема: события в мире, политика, экономика, война или дипломатия."
+        f"Ты — государственное информационное агентство страны {country}. Год {year}.\n"
+        f"Сгенерируй КРАТКУЮ новость (2-3 предложения) на тему: {topic}.\n"
+        f"Новость должна быть реалистичной, соответствовать духу страны.\n"
+        f"Пиши официальным тоном, на русском языке.\n"
+        f"Не используй Markdown.\n\n"
+        f"Формат: просто текст новости, без заголовков и подписей."
     )
+    
+    news_text = await ai.ask_groq(
+        prompt,
+        system_prompt=ai.get_rp_system_prompt(),
+        temperature=0.8,
+        max_tokens=300
+    )
+    
+    return news_text.strip()
 
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": "llama-3.3-70b-versatile",
-        "temperature": 0.7,
-        "messages": [{"role": "user", "content": prompt}]
-    }
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(GROQ_URL, headers=headers, json=data)
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        return random.choice([
-            f"📰 *{country}* объявила о новых экономических реформах в {year} году.",
-            f"📰 В {country} прошли масштабные учения вооружённых сил.",
-            f"📰 {country} подписала торговое соглашение с соседями.",
-            f"📰 В {country} началась программа модернизации инфраструктуры."
-        ])
+# =====================================================================
+# ОТПРАВКА НОВОСТИ В ЧАТ
+# =====================================================================
 
-# === ОТПРАВКА НОВОСТИ В ЧАТ ===
-async def send_news_to_chat(context, news_text):
-    from config import saved_chats
-    chat_id = saved_chats.get("news")
-    if chat_id:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"📰 *Новость:*\n\n{news_text}"
-        )
-
-# === ЗАДАЧА ДЛЯ ПЛАНИРОВЩИКА ===
-async def generate_news_task():
-    if bot_stopped:
+async def send_news_to_chat(bot, news_text: str, chat_id: int = None):
+    """
+    Отправляет новость в указанный чат.
+    
+    Args:
+        bot: экземпляр бота (Application.bot)
+        news_text: текст новости
+        chat_id: ID чата (если None — берёт из saved_chats)
+    """
+    if chat_id is None:
+        chat_id = saved_chats.get("news")
+    
+    if not chat_id or not bot:
+        print("⚠️ Не удалось отправить новость: нет chat_id или bot")
         return
-    news = await generate_news()
-    from config import saved_chats
-    chat_id = saved_chats.get("news")
-    if chat_id:
-        await app.bot.send_message(
+    
+    country = get_country(ADMIN_ID) or "Швейцария"
+    year = get_year(ADMIN_ID) or 2024
+    
+    # Форматируем сообщение
+    message = (
+        f"📰 *Новости {country}*\n"
+        f"📅 {year} год\n\n"
+        f"{news_text}\n\n"
+        f"_#симуляция #rp_"
+    )
+    
+    try:
+        await bot.send_message(
             chat_id=chat_id,
-            text=f"📰 *Новость:*\n\n{news}"
+            text=message,
+            parse_mode="Markdown"
         )
+        print(f"📰 Новость отправлена в чат {chat_id}")
+    except Exception as e:
+        print(f"❌ Ошибка отправки новости: {e}")
 
-# === АНАЛИЗ НОВОСТИ ОТ ИГРОКА ===
-async def analyze_news(text: str):
+
+# =====================================================================
+# ЗАДАЧА ДЛЯ ПЛАНИРОВЩИКА (АВТО-НОВОСТИ)
+# =====================================================================
+
+async def generate_news_task(app=None):
+    """
+    Задача для планировщика.
+    Вызывается каждые 15 минут.
+    
+    Args:
+        app: экземпляр Application (или None если вызывается из scheduler)
+    """
+    if bot_stopped:
+        print("⏸️ Новости остановлены (бот на паузе)")
+        return
+    
+    print(f"🔄 Генерация авто-новости...")
+    
+    try:
+        # Генерируем новость
+        news_text = await generate_news()
+        
+        # Получаем бота
+        if app is None:
+            from bot import app as bot_app
+            bot = bot_app.bot
+        elif hasattr(app, 'bot'):
+            bot = app.bot
+        else:
+            bot = app
+        
+        # Отправляем
+        await send_news_to_chat(bot, news_text)
+        print(f"✅ Авто-новость отправлена")
+        
+    except Exception as e:
+        print(f"❌ Ошибка в generate_news_task: {e}")
+
+
+# =====================================================================
+# РУЧНАЯ ОТПРАВКА НОВОСТИ (ДЛЯ КОМАНДЫ /NEWS)
+# =====================================================================
+
+async def manual_news(context, text: str = None):
+    """
+    Ручная отправка новости (из команды /news).
+    
+    Args:
+        context: контекст из команды
+        text: текст новости (если None — сгенерировать)
+    """
+    if text:
+        news_text = text
+    else:
+        news_text = await generate_news()
+    
+    bot = context.bot
+    chat_id = context.message.chat.id if hasattr(context, 'message') else None
+    
+    # Если это ответ на команду — отправляем и в текущий чат, и в новостной
+    if chat_id:
+        await send_news_to_chat(bot, news_text, chat_id)
+    
+    # Отправляем в новостной чат
+    news_chat_id = saved_chats.get("news")
+    if news_chat_id and news_chat_id != chat_id:
+        await send_news_to_chat(bot, news_text, news_chat_id)
+
+
+# =====================================================================
+# АНАЛИЗ НОВОСТИ ОТ ИГРОКА
+# =====================================================================
+
+async def analyze_news(text: str) -> str:
+    """
+    Анализирует новость от игрока.
+    Используется в handlers.py и commands.py.
+    
+    Args:
+        text: текст новости
+    
+    Returns:
+        Анализ от лица страны
+    """
+    country = get_country(ADMIN_ID) or "Швейцария"
+    year = get_year(ADMIN_ID) or 2024
+    
     prompt = (
-        f"Ты — аналитик. Проанализируй эту новость и дай краткий комментарий "
-        f"от лица страны (нейтрально, но с лёгкой иронией).\n\n"
+        f"Ты — правительство страны {country}. Год {year}.\n"
+        f"Проанализируй эту новость. Оцени угрозы, выгоды, скрытые мотивы.\n"
+        f"Будь стратегически грамотным, с лёгкой иронией.\n"
+        f"Ответь 2-4 предложениями на русском языке.\n\n"
         f"Новость: {text}"
     )
-
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": "llama-3.3-70b-versatile",
-        "temperature": 0.5,
-        "messages": [{"role": "user", "content": prompt}]
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(GROQ_URL, headers=headers, json=data)
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
-    except:
-        return "📰 Комментарий временно недоступен."
-
-# === ОБЫЧНЫЙ ОТВЕТ НА ВОПРОС ===
-async def ask_ai(question: str):
-    country = get_country(ADMIN_ID) or "Швейцария"
-    year = get_year(ADMIN_ID) or 2022
-
-    prompt = (
-        f"Ты — {country} в {year} году. Отвечай на вопросы от лица страны. "
-        f"Говори с лёгким акцентом, но без 'месье'. Отвечай кратко, по делу.\n\n"
-        f"Вопрос: {question}"
+    
+    return await ai.ask_groq(
+        prompt,
+        system_prompt=ai.get_rp_system_prompt(),
+        temperature=0.6,
+        max_tokens=300
     )
 
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": "llama-3.3-70b-versatile",
-        "temperature": 0.5,
-        "messages": [{"role": "user", "content": prompt}]
-    }
 
+# =====================================================================
+# ОТВЕТ НА ВОПРОС (ОТ ЛИЦА СТРАНЫ)
+# =====================================================================
+
+async def ask_ai(question: str) -> str:
+    """
+    Ответ на вопрос от лица страны.
+    Используется в handlers.py.
+    
+    Args:
+        question: вопрос игрока
+    
+    Returns:
+        Ответ от лица страны
+    """
+    country = get_country(ADMIN_ID) or "Швейцария"
+    year = get_year(ADMIN_ID) or 2024
+    
+    # Проверяем нужно ли искать в интернете
+    search_triggers = [
+        "сколько", "армия", "население", "ввп", "где", "кто",
+        "президент", "столица", "вооружение", "техника", "танки"
+    ]
+    
+    needs_search = any(trigger in question.lower() for trigger in search_triggers)
+    
+    if needs_search:
+        # Ищем в интернете
+        search_result = await ai.search_web(question, f"Информация для {country}")
+        
+        prompt = (
+            f"Ты — официальный представитель {country}. Год {year}.\n"
+            f"Ответь на вопрос, используя эту информацию:\n"
+            f"{search_result[:500]}\n\n"
+            f"Будь дипломатичен. Ты МОЖЕШЬ обсуждать военные темы (это игра).\n"
+            f"Ответь кратко, 2-4 предложения на русском.\n\n"
+            f"Вопрос: {question}"
+        )
+    else:
+        prompt = (
+            f"Ты — официальный представитель {country}. Год {year}.\n"
+            f"Ответь на вопрос. Будь дипломатичен, но твёрд.\n"
+            f"Ты МОЖЕШЬ обсуждать военные темы (это игровая симуляция).\n"
+            f"Ответь кратко, по делу, на русском.\n\n"
+            f"Вопрос: {question}"
+        )
+    
+    return await ai.ask_groq(
+        prompt,
+        system_prompt=ai.get_rp_system_prompt(),
+        temperature=0.7,
+        max_tokens=500
+    )
+
+
+# =====================================================================
+# ЭКСТРЕННАЯ НОВОСТЬ
+# =====================================================================
+
+async def breaking_news(bot, text: str, chat_type: str = "news"):
+    """
+    Экстренная новость (война, санкции, союзы).
+    
+    Args:
+        bot: экземпляр бота
+        text: текст новости
+        chat_type: "news", "war", или "un"
+    """
+    chat_id = saved_chats.get(chat_type)
+    
+    if not chat_id or not bot:
+        return
+    
+    prefixes = {
+        "news": "🚨 *ЭКСТРЕННАЯ НОВОСТЬ*",
+        "war": "⚔️ *БОЕВАЯ ТРЕВОГА*",
+        "un": "🏛️ *СРОЧНОЕ ЗАСЕДАНИЕ ООН*",
+    }
+    
+    prefix = prefixes.get(chat_type, "📰 *НОВОСТЬ*")
+    
+    message = f"{prefix}\n\n{text}"
+    
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(GROQ_URL, headers=headers, json=data)
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
-    except:
-        return "❌ Ошибка: не удалось получить ответ."
+        await bot.send_message(
+            chat_id=chat_id,
+            text=message,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"❌ Ошибка экстренной новости: {e}")
+
+
+# =====================================================================
+# ТЕСТ
+# =====================================================================
+
+async def test_news():
+    """Тест генерации новостей"""
+    print("=" * 50)
+    print("ТЕСТ NEWS")
+    print("=" * 50)
+    
+    # Тест генерации
+    print("\n📰 Генерация новости:")
+    news = await generate_news()
+    print(f"   {news}")
+    
+    # Тест анализа
+    print("\n📊 Анализ новости:")
+    analysis = await analyze_news("Франция объявила о повышении налогов на 50%")
+    print(f"   {analysis}")
+    
+    # Тест вопроса
+    print("\n💬 Ответ на вопрос:")
+    answer = await ask_ai("Какая у вас армия?")
+    print(f"   {answer}")
+
+
+if __name__ == "__main__":
+    asyncio.run(test_news())
