@@ -23,7 +23,7 @@ async def un_propose_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     text = " ".join(args)
-    country = get_country(user_id) or "Швейцария"
+    country = get_country(user_id) or "неизвестная страна"
     year = get_year(user_id) or 2022
 
     session_id = f"un_{user_id}_{year}_{len(un_sessions)}"
@@ -44,6 +44,9 @@ async def un_propose_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"🗳️ Голосование началось!\n"
         f"📝 Напишите /vote [за/против] чтобы проголосовать."
     )
+    
+    # Запускаем таймер голосования (5 минут)
+    asyncio.create_task(un_voting_timer(session_id))
 
 # === ГОЛОСОВАНИЕ В ООН ===
 async def vote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -95,8 +98,8 @@ async def un_voting_timer(session_id: str):
     else:
         result = "❌ Резолюция ОТКЛОНЕНА!"
 
-    # Отправляем результат в чат
-    from commands import saved_chats
+    # Отправляем результат в чат ООН
+    from config import saved_chats
     chat_id = saved_chats.get("un")
     if chat_id:
         await app.bot.send_message(
@@ -126,14 +129,14 @@ async def ally_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = args[0]
     alliance_type = args[1] if len(args) > 1 else "торговый"
 
-    country = get_country(user_id) or "Швейцария"
+    country = get_country(user_id) or "неизвестная страна"
     
     alliance_id = f"{country}_{target}_{len(alliances)}"
     alliances[alliance_id] = {
         "country1": country,
         "country2": target,
         "type": alliance_type,
-        "active": True
+        "active": False
     }
 
     await update.message.reply_text(
@@ -144,10 +147,10 @@ async def ally_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === ПРИНЯТЬ СОЮЗ ===
 async def accept_ally_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    country = get_country(user_id) or "Швейцария"
+    country = get_country(user_id) or "неизвестная страна"
 
     for alliance_id, alliance in alliances.items():
-        if alliance["country2"] == country and alliance["active"]:
+        if alliance["country2"] == country and not alliance["active"]:
             alliance["active"] = True
             await update.message.reply_text(
                 f"✅ *{country} принял союз с {alliance['country1']}!*\n\n"
@@ -172,7 +175,7 @@ async def sanctions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     target = args[0]
     reason = " ".join(args[1:])
-    country = get_country(user_id) or "Швейцария"
+    country = get_country(user_id) or "неизвестная страна"
 
     sanctions[target] = {
         "imposed_by": country,
@@ -207,12 +210,15 @@ async def remove_sanctions_command(update: Update, context: ContextTypes.DEFAULT
 
 # === СТАТУС ДИПЛОМАТИИ ===
 async def diplomacy_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "🌍 *Дипломатическая обстановка:*\n\n"
+    user_id = update.message.from_user.id
+    country = get_country(user_id) or "неизвестная страна"
+    
+    text = f"🌍 *Дипломатическая обстановка для {country}:*\n\n"
 
     if alliances:
         text += "🤝 *Активные союзы:*\n"
         for alliance in alliances.values():
-            if alliance["active"]:
+            if alliance["active"] and (alliance["country1"] == country or alliance["country2"] == country):
                 text += f"• {alliance['country1']} — {alliance['country2']} ({alliance['type']})\n"
     else:
         text += "🤝 Активных союзов нет.\n"
