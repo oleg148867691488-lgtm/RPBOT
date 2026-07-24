@@ -1,12 +1,9 @@
 import re
 from telegram import Update
 from telegram.ext import ContextTypes
-from config import ADMIN_ID, saved_chats, save_saved_chats
+from config import ADMIN_ID, saved_chats, save_saved_chats, bot_stopped
 from history import save_country, save_year, get_country, get_year
 from news import generate_news, send_news_to_chat
-
-# === ГЛОБАЛЬНАЯ ПЕРЕМЕННАЯ ДЛЯ ОСТАНОВКИ ===
-bot_stopped = False
 
 # === /START ===
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -15,7 +12,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 Команды:\n"
         "/country [страна] — выбрать страну\n"
         "/year [год] — установить год\n"
-        "/news [текст] — выпустить новость (только для админа)\n"
+        "/news [текст] — выпустить новость\n"
         "/savechatnews — сохранить этот чат для новостей\n"
         "/savechatwar — сохранить этот чат для войны\n"
         "/savechatoon — сохранить этот чат для ООН\n"
@@ -91,7 +88,7 @@ async def savechatoon_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     save_saved_chats(saved_chats)
     await update.message.reply_text("🏛️ Кабинет ООН сохранён.")
 
-# === /NEWS (РУЧНОЙ ВЫПУСК) ===
+# === /NEWS ===
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id != ADMIN_ID:
@@ -100,23 +97,21 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     args = context.args
     if not args:
-        # Если текста нет — генерируем новость автоматически
         news = await generate_news()
         await send_news_to_chat(context, news)
-        await update.message.reply_text("✅ Новость сгенерирована и отправлена в новостной канал.")
+        await update.message.reply_text("✅ Новость сгенерирована и отправлена.")
         return
 
-    # Если текст есть — отправляем его как новость
     text = " ".join(args)
     await send_news_to_chat(context, text)
-    await update.message.reply_text("✅ Новость отправлена в новостной канал.")
+    await update.message.reply_text("✅ Новость отправлена.")
 
 # === /STOP ===
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global bot_stopped
     user_id = update.message.from_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Доступ запрещ.")
+        await update.message.reply_text("❌ Доступ запрещён.")
         return
 
     bot_stopped = True
@@ -127,7 +122,7 @@ async def start_bot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global bot_stopped
     user_id = update.message.from_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Доступ запрещ.")
+        await update.message.reply_text("❌ Доступ запрещён.")
         return
 
     bot_stopped = False
