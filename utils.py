@@ -53,7 +53,10 @@ def get_current_time() -> str:
 # === ИЗВЛЕЧЕНИЕ КЛЮЧЕВЫХ СЛОВ ===
 def extract_keywords(text: str, min_len: int = 4, max_words: int = 5) -> list:
     words = re.findall(r'[\w]+', text.lower())
-    stop_words = {'что', 'как', 'для', 'это', 'так', 'вот', 'если', 'то', 'на', 'с', 'по', 'из', 'у', 'о', 'об', 'без', 'до', 'за', 'при', 'через', 'между', 'среди', 'про'}
+    stop_words = {
+        'что', 'как', 'для', 'это', 'так', 'вот', 'если', 'то', 'на', 'с', 'по',
+        'из', 'у', 'о', 'об', 'без', 'до', 'за', 'при', 'через', 'между', 'среди', 'про'
+    }
     keywords = [w for w in words if w not in stop_words and len(w) >= min_len]
     return list(set(keywords))[:max_words]
 
@@ -61,7 +64,7 @@ def extract_keywords(text: str, min_len: int = 4, max_words: int = 5) -> list:
 def format_number(num: int) -> str:
     return f"{num:,}".replace(",", " ")
 
-# === ПРОВЕРКА, ЕСТЬ ЛИ УГОЛОВНЫЙ КЛЮЧ ===
+# === ПРОВЕРКА, ЕСТЬ ЛИ КЛЮЧЕВОЕ СЛОВО ===
 def has_keyword(text: str, keywords: list) -> bool:
     for kw in keywords:
         if kw.lower() in text.lower():
