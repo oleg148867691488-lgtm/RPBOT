@@ -2,6 +2,7 @@
 КОНФИГУРАЦИЯ БОТА
 ==================
 Загружает ВСЕ переменные окружения (Render).
+Gemini 2.5 Flash-Lite (бесплатный tier).
 """
 
 import os
@@ -30,7 +31,7 @@ OLLAMA_KEY = os.getenv("OLLAMA_KEY")
 # =====================================================================
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 
 # =====================================================================
