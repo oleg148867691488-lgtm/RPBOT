@@ -1,8 +1,7 @@
 import httpx
 import random
-from config import GROQ_API_KEY, GROQ_URL, ADMIN_ID
+from config import GROQ_API_KEY, GROQ_URL, ADMIN_ID, bot_stopped  # <--- Импорт из config
 from history import get_country, get_year
-from commands import bot_stopped
 
 # === ГЕНЕРАЦИЯ НОВОСТИ ЧЕРЕЗ ИИ ===
 async def generate_news():
@@ -28,7 +27,6 @@ async def generate_news():
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        # Если Groq упал — запасные новости
         return random.choice([
             f"📰 *{country}* объявила о новых экономических реформах в {year} году.",
             f"📰 В {country} прошли масштабные учения вооружённых сил.",
@@ -48,10 +46,9 @@ async def send_news_to_chat(context, news_text):
 
 # === ЗАДАЧА ДЛЯ ПЛАНИРОВЩИКА ===
 async def generate_news_task():
-    if bot_stopped:
+    if bot_stopped:  # <--- Используем переменную из config
         return
     news = await generate_news()
-    # Отправляем в новостной канал
     from config import saved_chats
     chat_id = saved_chats.get("news")
     if chat_id:
