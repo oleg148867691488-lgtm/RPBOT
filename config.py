@@ -1,19 +1,23 @@
 import os
-import re
 import json
-import sqlite3
-import httpx
-import asyncio
-import datetime
-import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# === ТОКЕНЫ ===
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# === AI ТОКЕНЫ ===
+GROQ_KEYS = [
+    os.getenv("GROQ_KEY_1"),
+    os.getenv("GROQ_KEY_2"),
+    os.getenv("GROQ_KEY_3"),
+    os.getenv("GROQ_KEY_4"),
+    os.getenv("GROQ_KEY_5"),
+]
+GEMINI_KEY = os.getenv("GEMINI_KEY")
+OLLAMA_KEY = os.getenv("OLLAMA_KEY")
+
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")  # или URL на Render
 
 # === АДМИН ===
 ADMIN_ID = 7184396483
