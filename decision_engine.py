@@ -2,7 +2,7 @@
 DECISION ENGINE — МОЗГ ФЮРЕРА (IRON MAN MODE)
 ===============================================
 Адаптивный ИИ-правитель для ЛЮБОЙ страны.
-Характер: Гениальный стратег, не повторяет ошибок истории.
+С ИИ-анализом мировой напряжённости.
 """
 
 import random
@@ -32,7 +32,6 @@ from history import (
 # =====================================================================
 
 def get_rp_month() -> str:
-    """Определяет игровой месяц по реальному часу (МСК)"""
     tz = pytz.timezone('Europe/Moscow')
     now = datetime.now(tz)
     hour = now.hour
@@ -44,7 +43,6 @@ def get_rp_month() -> str:
     return months[month_index]
 
 def get_current_season() -> str:
-    """Определяет сезон по игровому месяцу"""
     month = get_rp_month()
     seasons = {
         "декабрь": "winter", "январь": "winter", "февраль": "winter",
@@ -55,51 +53,20 @@ def get_current_season() -> str:
     return seasons.get(month, "summer")
 
 def get_season_effects() -> dict:
-    """Возвращает модификаторы для текущего сезона"""
     season = get_current_season()
     effects = {
-        "winter": {
-            "attack_mod": 0.5,
-            "defense_mod": 0.8,
-            "supply_mod": 0.4,
-            "air_mod": 0.3,
-            "tank_mod": 0.4,
-            "description": "❄️ Зима: наступление затруднено, техника замерзает"
-        },
-        "spring": {
-            "attack_mod": 0.8,
-            "defense_mod": 1.0,
-            "supply_mod": 0.7,
-            "air_mod": 0.7,
-            "tank_mod": 0.6,
-            "description": "🌱 Весна: распутица, но лучше чем зимой"
-        },
-        "summer": {
-            "attack_mod": 1.3,
-            "defense_mod": 1.0,
-            "supply_mod": 1.2,
-            "air_mod": 1.2,
-            "tank_mod": 1.3,
-            "description": "☀️ Лето: идеальное время для наступления!"
-        },
-        "autumn": {
-            "attack_mod": 0.9,
-            "defense_mod": 1.1,
-            "supply_mod": 0.8,
-            "air_mod": 0.8,
-            "tank_mod": 0.9,
-            "description": "🍂 Осень: дожди, но ещё можно воевать"
-        },
+        "winter": {"attack_mod": 0.5, "defense_mod": 0.8, "supply_mod": 0.4, "air_mod": 0.3, "tank_mod": 0.4, "description": "❄️ Зима: наступление затруднено"},
+        "spring": {"attack_mod": 0.8, "defense_mod": 1.0, "supply_mod": 0.7, "air_mod": 0.7, "tank_mod": 0.6, "description": "🌱 Весна: распутица"},
+        "summer": {"attack_mod": 1.3, "defense_mod": 1.0, "supply_mod": 1.2, "air_mod": 1.2, "tank_mod": 1.3, "description": "☀️ Лето: идеальное время!"},
+        "autumn": {"attack_mod": 0.9, "defense_mod": 1.1, "supply_mod": 0.8, "air_mod": 0.8, "tank_mod": 0.9, "description": "🍂 Осень: дожди"},
     }
     return effects.get(season, effects["summer"])
 
 # =====================================================================
-# ТИПЫ СТРАН И ИХ ОСОБЕННОСТИ
+# ТИПЫ СТРАН
 # =====================================================================
 
 class CountryProfile:
-    """Профиль страны — определяет стиль игры"""
-    
     def __init__(self, name: str, info: dict = None):
         self.name = name
         self.info = info or {}
@@ -108,130 +75,50 @@ class CountryProfile:
         self.restrictions = self._get_restrictions()
     
     def _determine_type(self) -> str:
-        """Определяет тип страны по названию и данным"""
         name_lower = self.name.lower()
-        
-        # Горные страны
-        mountain_countries = ["швейцария", "австрия", "непал", "тибет", "бутан", "андорра"]
-        if any(c in name_lower for c in mountain_countries):
+        if any(c in name_lower for c in ["швейцария", "австрия", "непал", "тибет", "бутан"]):
             return "mountain_fortress"
-        
-        # Островные страны
-        island_countries = ["великобритания", "япония", "индонезия", "филиппины", "мадагаскар"]
-        if any(c in name_lower for c in island_countries):
+        if any(c in name_lower for c in ["великобритания", "япония", "индонезия"]):
             return "naval_power"
-        
-        # Малые страны
-        micro_countries = ["люксембург", "ватикан", "монако", "лихтенштейн", "сан-марино", "мальта"]
-        if any(c in name_lower for c in micro_countries):
+        if any(c in name_lower for c in ["люксембург", "ватикан", "монако", "лихтенштейн"]):
             return "micro_state"
-        
-        # Крупные державы
-        superpowers = ["сша", "китай", "россия", "индия"]
-        if any(c in name_lower for c in superpowers):
+        if any(c in name_lower for c in ["сша", "китай", "россия", "индия"]):
             return "superpower"
-        
-        # Военные державы
-        military_powers = ["германия", "франция", "турция", "израиль", "пакистан", "бразилия"]
-        if any(c in name_lower for c in military_powers):
+        if any(c in name_lower for c in ["германия", "франция", "турция", "израиль"]):
             return "military_power"
-        
-        # Экономические центры
-        economic_centers = ["сингапур", "оаэ", "катар", "швеция", "нидерланды", "бельгия"]
-        if any(c in name_lower for c in economic_centers):
+        if any(c in name_lower for c in ["сингапур", "оаэ", "катар", "швеция"]):
             return "economic_center"
-        
         return "regional_power"
     
     def _get_bonuses(self) -> dict:
-        """Бонусы в зависимости от типа страны"""
         bonuses = {
-            "mountain_fortress": {
-                "defense": 3.0,
-                "guerilla": 2.0,
-                "attrition": 1.5,
-                "description": "🏔️ Горная крепость: защита x3, партизаны x2"
-            },
-            "naval_power": {
-                "navy": 2.0,
-                "trade": 1.5,
-                "blockade": 1.8,
-                "description": "🚢 Морская держава: флот x2, торговля x1.5"
-            },
-            "micro_state": {
-                "stealth": 2.5,
-                "diplomacy": 2.0,
-                "banking": 2.5,
-                "description": "🏦 Микро-государство: банки x2.5, дипломатия x2"
-            },
-            "superpower": {
-                "military": 1.5,
-                "economy": 1.5,
-                "tech": 1.3,
-                "description": "💪 Сверхдержава: армия x1.5, экономика x1.5"
-            },
-            "military_power": {
-                "army": 1.4,
-                "blitzkrieg": 1.3,
-                "production": 1.3,
-                "description": "⚔️ Военная держава: армия x1.4, блицкриг x1.3"
-            },
-            "economic_center": {
-                "trade": 2.0,
-                "tech_speed": 1.5,
-                "influence": 1.8,
-                "description": "💰 Экономический центр: торговля x2, технологии x1.5"
-            },
-            "regional_power": {
-                "balanced": 1.1,
-                "adaptation": 1.2,
-                "description": "🏛️ Региональная держава: сбалансированное развитие"
-            },
+            "mountain_fortress": {"defense": 3.0, "guerilla": 2.0, "description": "🏔️ Горная крепость"},
+            "naval_power": {"navy": 2.0, "trade": 1.5, "description": "🚢 Морская держава"},
+            "micro_state": {"stealth": 2.5, "diplomacy": 2.0, "banking": 2.5, "description": "🏦 Микро-государство"},
+            "superpower": {"military": 1.5, "economy": 1.5, "tech": 1.3, "description": "💪 Сверхдержава"},
+            "military_power": {"army": 1.4, "blitzkrieg": 1.3, "description": "⚔️ Военная держава"},
+            "economic_center": {"trade": 2.0, "tech_speed": 1.5, "description": "💰 Экономический центр"},
+            "regional_power": {"balanced": 1.1, "description": "🏛️ Региональная держава"},
         }
         return bonuses.get(self.profile_type, bonuses["regional_power"])
     
     def _get_restrictions(self) -> dict:
-        """Ограничения в зависимости от типа страны"""
         restrictions = {
-            "mountain_fortress": {
-                "max_tanks": 0.3,
-                "max_airforce": 0.5,
-                "description": "⚠️ Танки и авиация неэффективны в горах"
-            },
-            "naval_power": {
-                "max_land_army": 0.7,
-                "description": "⚠️ Сухопутная армия ограничена"
-            },
-            "micro_state": {
-                "max_army_size": 0.05,
-                "max_nukes": 0,
-                "description": "⚠️ Армия ограничена размером страны"
-            },
-            "superpower": {
-                "diplomatic_penalty": 0.7,
-                "description": "⚠️ Все боятся гегемона"
-            },
-            "military_power": {
-                "diplomatic_penalty": 0.8,
-                "description": "⚠️ Соседи насторожены"
-            },
-            "economic_center": {
-                "max_military": 0.6,
-                "description": "⚠️ Фокус на экономике, не на войне"
-            },
-            "regional_power": {
-                "description": "✅ Нет серьёзных ограничений"
-            },
+            "mountain_fortress": {"max_tanks": 0.3, "description": "⚠️ Танки неэффективны в горах"},
+            "naval_power": {"max_land_army": 0.7, "description": "⚠️ Сухопутная армия ограничена"},
+            "micro_state": {"max_army_size": 0.05, "description": "⚠️ Армия ограничена размером"},
+            "superpower": {"diplomatic_penalty": 0.7, "description": "⚠️ Все боятся гегемона"},
+            "military_power": {"diplomatic_penalty": 0.8, "description": "⚠️ Соседи насторожены"},
+            "economic_center": {"max_military": 0.6, "description": "⚠️ Фокус на экономике"},
+            "regional_power": {"description": "✅ Нет ограничений"},
         }
         return restrictions.get(self.profile_type, {"description": "✅ Нет ограничений"})
 
 # =====================================================================
-# ГЛОБАЛЬНОЕ СОСТОЯНИЕ МИРА (ОБНОВЛЁННОЕ)
+# МИР
 # =====================================================================
 
 class WorldState:
-    """Хранит информацию о всех странах и отношениях"""
-    
     def __init__(self):
         self.countries: Dict[str, dict] = {}
         self.country_profiles: Dict[str, CountryProfile] = {}
@@ -244,80 +131,122 @@ class WorldState:
         self.turn: int = 0
         self.year: int = 2024
         self.month: str = "январь"
+        self.world_tension: float = 0.0
         
-        # Технологии (уровни 1-10)
         self.technologies = {
-            "infantry": 1,
-            "tanks": 1,
-            "artillery": 1,
-            "airforce": 1,
-            "navy": 1,
-            "air_defense": 1,
-            "drones": 1,
-            "cyber": 1,
-            "nuclear": 0,
-            "space": 1,
+            "infantry": 1, "tanks": 1, "artillery": 1, "airforce": 1,
+            "navy": 1, "air_defense": 1, "drones": 1, "cyber": 1,
+            "nuclear": 0, "space": 1,
         }
         
-        # Инфраструктура
         self.infrastructure = {
-            "factories": 1,
-            "research_labs": 1,
-            "hospitals": 1,
-            "airbases": 1,
-            "ports": 0,
-            "bunkers": 1,
-            "mountain_forts": 0,
+            "factories": 1, "research_labs": 1, "hospitals": 1,
+            "airbases": 1, "ports": 0, "bunkers": 1, "mountain_forts": 0,
         }
     
     def get_power_rating(self, country: str) -> float:
-        """Вычисляет рейтинг силы страны (0-100) с учётом профиля"""
         if country not in self.countries:
             return 0
-        
         c = self.countries[country]
         profile = self.country_profiles.get(country)
         bonuses = profile.bonuses if profile else {}
         
-        # Базовая военная мощь
         military = (
-            c.get("army_size", 0) * 0.3 * bonuses.get("army", 1.0) * bonuses.get("military", 1.0) +
-            c.get("tanks", 0) * 0.5 * bonuses.get("army", 1.0) +
-            c.get("aircraft", 0) * 0.7 * bonuses.get("airforce", 1.0) +
-            c.get("ships", 0) * 0.4 * bonuses.get("navy", 1.0) +
+            c.get("army_size", 0) * 0.3 * bonuses.get("army", 1.0) +
+            c.get("tanks", 0) * 0.5 +
+            c.get("aircraft", 0) * 0.7 +
+            c.get("ships", 0) * 0.4 +
             c.get("nukes", 0) * 10.0
         ) / 10000
         
-        # Экономика
-        economy = c.get("gdp", 0) / 1_000_000_000_000 * bonuses.get("economy", 1.0)
-        
-        # Технологии
-        tech = sum(self.technologies.values()) / 10 * bonuses.get("tech", 1.0)
-        
-        # Союзники
-        allies = len(self.alliances.get(country, [])) * 5 * bonuses.get("diplomacy", 1.0)
+        economy = c.get("gdp", 0) / 1_000_000_000_000
+        tech = sum(self.technologies.values()) / 10
+        allies = len(self.alliances.get(country, [])) * 5
         
         return min(100, military * 0.5 + economy * 0.3 + tech * 0.1 + allies * 0.1)
     
-    def get_effective_terrain(self, country: str) -> str:
-        """Определяет эффективный тип местности с учётом инфраструктуры"""
-        profile = self.country_profiles.get(country)
-        if not profile:
-            return "plain"
+    # ================================================================
+    # НАПРЯЖЁННОСТЬ (ИИ)
+    # ================================================================
+    
+    async def calculate_world_tension_ai(self) -> dict:
+        """ИИ сам определяет мировую напряжённость"""
         
-        # Горные крепости всегда имеют бонус гор
-        if profile.profile_type == "mountain_fortress":
-            forts = self.infrastructure.get("mountain_forts", 0)
-            if forts > 0:
-                return "mountains"  # Искусственные укрепления как горы
+        active_wars = [w for w in self.wars.values() if w.get('status') == 'active']
+        war_descriptions = []
+        for war in active_wars[:5]:
+            war_descriptions.append(f"- {war['attacker']} vs {war['defender']}")
         
-        return "plain"
+        alliances_summary = []
+        for c, allies_list in list(self.alliances.items())[:5]:
+            if allies_list:
+                alliances_summary.append(f"- {c}: союз с {', '.join(allies_list[:3])}")
+        
+        sanctions_summary = []
+        for target, imposers in list(self.sanctions.items())[:5]:
+            sanctions_summary.append(f"- Против {target}: санкции от {', '.join(imposers[:3])}")
+        
+        recent_news = self.news_history[-5:] if self.news_history else ["Новостей нет"]
+        
+        prompt = f"""Ты — аналитик мировой напряжённости. Год {self.year}.
+
+Активные войны ({len(active_wars)}):
+{chr(10).join(war_descriptions) if war_descriptions else 'Нет активных войн'}
+
+Союзы:
+{chr(10).join(alliances_summary) if alliances_summary else 'Нет союзов'}
+
+Санкции:
+{chr(10).join(sanctions_summary) if sanctions_summary else 'Нет санкций'}
+
+Последние новости:
+{chr(10).join(f'- {n[:100]}' for n in recent_news)}
+
+Определи уровень мировой напряжённости от 0 до 100%.
+Учти исторический контекст года (1939-1945 = высокая, 1914-1918 = высокая).
+
+Формат ответа — ТОЛЬКО JSON:
+{{"tension": 65.5, "status": "Предвоенное время", "description": "Кратко почему (1 предложение)", "can_justify_war": true, "can_intervene": true, "can_use_nukes": false, "trend": "rising"}}
+
+Ответь ТОЛЬКО JSON, без пояснений."""
+
+        try:
+            import json, re
+            response = await ai.ask_groq(prompt, system_prompt=ai.get_rp_system_prompt(), temperature=0.3, max_tokens=300)
+            json_match = re.search(r'\{[^}]+\}', response)
+            if json_match:
+                data = json.loads(json_match.group())
+                self.world_tension = data.get('tension', 50)
+                return data
+        except Exception as e:
+            print(f"⚠️ Ошибка ИИ напряжённости: {e}")
+        
+        self.world_tension = min(100, len(active_wars) * 15)
+        return {"tension": self.world_tension, "status": "Неопределённо", "description": "ИИ не смог оценить", "can_justify_war": self.world_tension >= 25, "can_intervene": self.world_tension >= 50, "can_use_nukes": self.world_tension >= 90, "trend": "stable"}
+    
+    def can_justify_war(self, country: str, target: str) -> tuple:
+        """Проверяет может ли страна оправдать войну"""
+        if target in self.alliances.get(country, []):
+            return False, "🤝 Цель — ваш союзник"
+        if target in self.marionettes and self.marionettes[target] == country:
+            return False, "🎭 Цель — ваша марионетка"
+        if target in self.annexed:
+            return False, "🏴 Цель уже аннексирована"
+        
+        if self.world_tension >= 75:
+            return True, "💀 Мировой хаос — война без оправданий"
+        elif self.world_tension >= 50:
+            return True, f"⚠️ Высокая напряжённость ({self.world_tension:.1f}%)"
+        elif self.world_tension >= 25:
+            return True, f"⚡ Достаточная напряжённость ({self.world_tension:.1f}%)"
+        else:
+            return False, f"🕊️ Слишком мирное время ({self.world_tension:.1f}%)"
 
 # Глобальное состояние
 world = WorldState()
 
 # =====================================================================
-# ТИПЫ МЕСТНОСТИ И ПОГОДЫ (БЕЗ ИЗМЕНЕНИЙ)
+# ТИПЫ МЕСТНОСТИ
 # =====================================================================
 
 TERRAIN_TYPES = {
@@ -340,16 +269,10 @@ WEATHER_TYPES = {
 }
 
 # =====================================================================
-# ОСНОВНОЙ ЦИКЛ ПРИНЯТИЯ РЕШЕНИЙ (АДАПТИВНЫЙ)
+# ОСНОВНОЙ ЦИКЛ
 # =====================================================================
 
 async def decision_loop(context=None):
-    """
-    ГЛАВНЫЙ ЦИКЛ IRON MAN.
-    Адаптируется под ЛЮБУЮ страну.
-    Запускается каждые DECISION_INTERVAL_MINUTES минут.
-    """
-    
     if bot_stopped:
         return
     
@@ -362,7 +285,6 @@ async def decision_loop(context=None):
         init_economy(ADMIN_ID)
         economy = get_economy(ADMIN_ID)
     
-    # Обновляем профиль страны (вдруг сменили)
     if country not in world.country_profiles:
         world.country_profiles[country] = CountryProfile(country)
     
@@ -370,239 +292,149 @@ async def decision_loop(context=None):
     season_effects = get_season_effects()
     world.turn += 1
     
+    # Обновляем напряжённость через ИИ
+    if world.turn % 3 == 0 or world.turn == 1:
+        try:
+            tension_data = await world.calculate_world_tension_ai()
+            print(f"🌍 Напряжённость: {tension_data.get('tension', 0):.1f}% — {tension_data.get('status', '?')}")
+        except:
+            pass
+    
     print(f"\n{'='*50}")
     print(f"🔄 ХОД {world.turn} | {country} | {world.month} {world.year}")
-    print(f"📊 Профиль: {profile.profile_type} — {profile.bonuses.get('description', '')}")
+    print(f"📊 Профиль: {profile.profile_type} | Сила: {world.get_power_rating(country):.1f}/100")
+    print(f"🌍 Напряжённость: {world.world_tension:.1f}%")
     print(f"{'='*50}")
     
-    # ============================================================
-    # 1. АНАЛИЗ СИТУАЦИИ
-    # ============================================================
     my_power = world.get_power_rating(country)
     enemies = list(world.sanctions.get(country, []))
     allies = world.alliances.get(country, [])
-    wars_active = [w for w in world.wars.values() if w.get("status") == "active"]
+    wars_active = [w for w in world.wars.values() if w.get('status') == 'active']
     
-    print(f"📊 Мощь: {my_power:.1f}/100 | Сезон: {season_effects['description']}")
-    print(f"🤝 Союзники: {allies} | ⚔️ Враги: {enemies}")
-    print(f"💰 Бюджет: ${economy['budget']:,}")
+    # Экономика
+    await economic_decisions(context, country, economy)
     
-    # ============================================================
-    # 2. АДАПТИВНАЯ СТРАТЕГИЯ
-    # ============================================================
-    
-    if profile.profile_type == "micro_state":
-        # Микро-государства НЕ воюют — используют дипломатию и банки
-        await micro_state_strategy(context, country, economy, profile)
-    
-    elif profile.profile_type == "mountain_fortress":
-        # Горные крепости: оборона, измот врага
-        await mountain_strategy(context, country, economy, profile, season_effects)
-    
-    elif profile.profile_type == "naval_power":
-        # Морские державы: блокады, торговля, десанты
-        await naval_strategy(context, country, economy, profile, season_effects)
-    
-    elif profile.profile_type == "superpower":
-        # Сверхдержавы: доминирование, прокси-войны
-        await superpower_strategy(context, country, economy, profile, season_effects)
-    
-    elif profile.profile_type == "military_power":
-        # Военные державы: блицкриги, технологии
-        await military_strategy(context, country, economy, profile, season_effects)
-    
-    elif profile.profile_type == "economic_center":
-        # Экономики: скупать ослабших, давить санкциями
-        await economic_strategy(context, country, economy, profile)
-    
-    else:
-        # Региональные державы: сбалансированно
-        await balanced_strategy(context, country, economy, profile, season_effects)
-    
-    # ============================================================
-    # 3. ТЕХНОЛОГИИ И ИНФРАСТРУКТУРА (ДЛЯ ВСЕХ)
-    # ============================================================
+    # Технологии
     await tech_decisions(context, country, economy, profile)
+    
+    # Инфраструктура
     await infrastructure_decisions(context, country, economy, profile)
     
-    # ============================================================
-    # 4. ОТПРАВКА НОВОСТЕЙ
-    # ============================================================
+    # Военные решения (с проверкой напряжённости)
+    await military_decisions(context, country, economy, profile, season_effects)
+    
+    # Отправка новостей
     if world.news_history:
         await send_accumulated_news(context, country)
     
     print(f"✅ Ход {world.turn} завершён\n")
 
 # =====================================================================
-# СТРАТЕГИИ ДЛЯ РАЗНЫХ ТИПОВ СТРАН
+# ЭКОНОМИКА
 # =====================================================================
 
-async def micro_state_strategy(context, country: str, economy: dict, profile: CountryProfile):
-    """Стратегия микро-государства: банки, дипломатия, шпионаж"""
-    
+async def economic_decisions(context, country: str, economy: dict):
     budget = economy['budget']
-    banking_bonus = profile.bonuses.get("banking", 2.0)
+    steel = economy['steel']
     
-    # Доход от банков
-    bank_income = int(5_000_000 * banking_bonus * (1 + world.turn * 0.01))
-    update_economy(ADMIN_ID, budget=budget + bank_income)
+    if budget < 5_000_000 and steel > 1000:
+        sell_amount = min(500, steel - 500)
+        price = random.randint(600, 800)
+        update_economy(ADMIN_ID, budget=budget + sell_amount * price, steel=steel - sell_amount)
+        world.news_history.append(f"📉 *{country}* продала {sell_amount} тонн стали за ${sell_amount * price:,}")
     
-    if world.turn % 5 == 0:  # Каждые 5 ходов
-        world.news_history.append(
-            f"🏦 *{country}* заработал ${bank_income:,} на банковских операциях."
-        )
-    
-    # Ищем кому предложить финансовые услуги
-    for target in world.countries:
-        if target != country and random.random() < 0.2:
-            world.news_history.append(
-                f"💰 *{country}* предлагает {target} выгодные кредиты."
-            )
-
-async def mountain_strategy(context, country: str, economy: dict, profile: CountryProfile, season):
-    """Стратегия горной крепости: непробиваемая оборона"""
-    
-    budget = economy['budget']
-    defense_bonus = profile.bonuses.get("defense", 3.0)
-    
-    # Строим горные форты
-    if budget > 10_000_000 and random.random() < 0.3:
-        cost = 8_000_000
-        world.infrastructure["mountain_forts"] += 1
-        update_economy(ADMIN_ID, budget=budget - cost)
-        world.news_history.append(
-            f"🏔️ *{country}* укрепила горные перевалы! "
-            f"Оборона x{defense_bonus * (1 + world.infrastructure['mountain_forts'] * 0.2):.1f}"
-        )
-    
-    # Предупреждаем врагов
-    if world.turn % 7 == 0:
-        world.news_history.append(
-            f"⚠️ *{country}*: 'Альпы неприступны. Не пытайтесь.'"
-        )
-
-async def naval_strategy(context, country: str, economy: dict, profile: CountryProfile, season):
-    """Стратегия морской державы: флот, блокады, колонии"""
-    pass  # Будет дополнено
-
-async def superpower_strategy(context, country: str, economy: dict, profile: CountryProfile, season):
-    """Стратегия сверхдержавы: глобальное доминирование"""
-    pass  # Будет дополнено
-
-async def military_strategy(context, country: str, economy: dict, profile: CountryProfile, season):
-    """Стратегия военной державы: блицкриги"""
-    
-    my_power = world.get_power_rating(country)
-    budget = economy['budget']
-    
-    # Если лето и мы сильны — ищем цель
-    if season["attack_mod"] > 1.0 and my_power > 50:
-        await look_for_war_opportunities(context, country, my_power, budget, profile, season)
-
-async def economic_strategy(context, country: str, economy: dict, profile: CountryProfile):
-    """Стратегия экономического центра: скупка активов"""
-    pass  # Будет дополнено
-
-async def balanced_strategy(context, country: str, economy: dict, profile: CountryProfile, season):
-    """Сбалансированная стратегия: всего понемногу"""
-    pass  # Будет дополнено
+    elif budget > 100_000_000:
+        invest_amount = min(budget - 50_000_000, random.randint(10_000_000, 50_000_000))
+        options = ["factories", "research_labs", "hospitals", "airbases", "bunkers"]
+        choice = random.choice(options)
+        world.infrastructure[choice] = world.infrastructure.get(choice, 1) + 1
+        update_economy(ADMIN_ID, budget=budget - invest_amount)
+        world.news_history.append(f"🏗️ *{country}* инвестировала ${invest_amount:,} в {choice}")
 
 # =====================================================================
-# ТЕХНОЛОГИИ (АДАПТИВНЫЕ)
+# ТЕХНОЛОГИИ
 # =====================================================================
 
 async def tech_decisions(context, country: str, economy: dict, profile: CountryProfile):
-    """Разработка технологий с учётом профиля страны"""
-    
     budget = economy['budget']
     labs = world.infrastructure.get("research_labs", 1)
     tech_speed = profile.bonuses.get("tech_speed", 1.0)
-    
     research_chance = min(0.4, 0.05 * labs * tech_speed)
     
     if random.random() < research_chance and budget > 10_000_000:
-        # Выбираем технологию, подходящую для профиля
-        tech_priorities = get_tech_priorities(profile)
+        priorities = {
+            "mountain_fortress": ["air_defense", "infantry", "drones"],
+            "naval_power": ["navy", "airforce", "drones"],
+            "micro_state": ["cyber", "drones", "space"],
+            "superpower": ["nuclear", "space", "airforce"],
+            "military_power": ["tanks", "airforce", "artillery"],
+            "economic_center": ["cyber", "drones", "space"],
+            "regional_power": ["infantry", "tanks", "airforce"],
+        }
+        tech_list = priorities.get(profile.profile_type, ["infantry", "tanks", "airforce"])
+        available = [t for t in tech_list if world.technologies.get(t, 1) < 10]
         
-        available = [t for t in tech_priorities if world.technologies.get(t, 1) < 10]
         if available:
-            tech = random.choice(available[:3])  # Приоритет первым трём
+            tech = random.choice(available[:3])
             cost = (world.technologies[tech] + 1) * 5_000_000
             
             if budget > cost:
                 world.technologies[tech] += 1
                 update_economy(ADMIN_ID, budget=budget - cost)
-                world.news_history.append(
-                    f"🔬 *{country}* улучшила {tech} до уровня {world.technologies[tech]}!"
-                )
-
-def get_tech_priorities(profile: CountryProfile) -> list:
-    """Возвращает приоритетные технологии для типа страны"""
-    priorities = {
-        "mountain_fortress": ["air_defense", "infantry", "drones", "artillery", "cyber"],
-        "naval_power": ["navy", "airforce", "drones", "cyber", "space"],
-        "micro_state": ["cyber", "drones", "space", "air_defense", "infantry"],
-        "superpower": ["nuclear", "space", "airforce", "navy", "tanks"],
-        "military_power": ["tanks", "airforce", "artillery", "drones", "infantry"],
-        "economic_center": ["cyber", "drones", "space", "airforce", "navy"],
-        "regional_power": ["infantry", "tanks", "artillery", "airforce", "air_defense"],
-    }
-    return priorities.get(profile.profile_type, ["infantry", "tanks", "airforce"])
+                world.news_history.append(f"🔬 *{country}* улучшила {tech} до уровня {world.technologies[tech]}!")
 
 # =====================================================================
 # ИНФРАСТРУКТУРА
 # =====================================================================
 
 async def infrastructure_decisions(context, country: str, economy: dict, profile: CountryProfile):
-    """Строительство инфраструктуры с учётом профиля"""
-    
     budget = economy['budget']
     
     if budget > 20_000_000:
-        # Приоритеты строительства
-        build_priorities = get_build_priorities(profile)
-        
-        choice = random.choice(build_priorities[:3])
+        priorities = {
+            "mountain_fortress": ["bunkers", "mountain_forts", "hospitals"],
+            "naval_power": ["ports", "airbases", "factories"],
+            "micro_state": ["research_labs", "hospitals"],
+            "superpower": ["factories", "airbases", "ports"],
+            "military_power": ["factories", "airbases", "bunkers"],
+            "economic_center": ["research_labs", "factories"],
+            "regional_power": ["factories", "airbases", "hospitals"],
+        }
+        build_list = priorities.get(profile.profile_type, ["factories", "research_labs"])
+        choice = random.choice(build_list[:3])
         cost = 15_000_000
         
         if budget > cost:
             world.infrastructure[choice] = world.infrastructure.get(choice, 1) + 1
             update_economy(ADMIN_ID, budget=budget - cost)
-            world.news_history.append(
-                f"🏗️ *{country}* построила {choice} (уровень {world.infrastructure[choice]})"
-            )
-
-def get_build_priorities(profile: CountryProfile) -> list:
-    """Приоритеты строительства для типа страны"""
-    priorities = {
-        "mountain_fortress": ["bunkers", "mountain_forts", "hospitals", "factories"],
-        "naval_power": ["ports", "airbases", "factories", "research_labs"],
-        "micro_state": ["research_labs", "hospitals", "bunkers"],
-        "superpower": ["factories", "airbases", "ports", "research_labs"],
-        "military_power": ["factories", "airbases", "bunkers", "research_labs"],
-        "economic_center": ["research_labs", "factories", "ports"],
-        "regional_power": ["factories", "airbases", "hospitals", "research_labs"],
-    }
-    return priorities.get(profile.profile_type, ["factories", "research_labs"])
+            world.news_history.append(f"🏗️ *{country}* построила {choice} (уровень {world.infrastructure[choice]})")
 
 # =====================================================================
-# ПОИСК ВОЗМОЖНОСТЕЙ ДЛЯ ВОЙНЫ
+# ВОЕННЫЕ РЕШЕНИЯ (С НАПРЯЖЁННОСТЬЮ)
 # =====================================================================
 
-async def look_for_war_opportunities(context, country: str, my_power: float, budget: int, profile: CountryProfile, season: dict):
-    """Ищем кого бы захватить (умно, с учётом профиля и сезона)"""
+async def military_decisions(context, country: str, economy: dict, profile: CountryProfile, season: dict):
+    my_power = world.get_power_rating(country)
+    budget = economy['budget']
     
-    # Микро-государства не нападают
+    # Проверяем активные войны
+    for war_id, war in list(world.wars.items()):
+        if war.get("status") != "active":
+            continue
+        
+        if country in [war["attacker"], war["defender"]]:
+            # Война уже идёт — просто продолжаем
+            continue
+    
+    # Ищем возможности для войны (с учётом напряжённости)
     if profile.profile_type == "micro_state":
-        return
+        return  # Микро-государства не нападают
     
-    # Зимой не нападаем если не сверхдержава
     if season["attack_mod"] < 0.6 and profile.profile_type != "superpower":
-        return
+        return  # Зимой не нападаем
     
-    # Не нападаем если бюджет маленький
     if budget < 50_000_000:
-        return
+        return  # Нет денег на войну
     
     targets = []
     for target_name in world.countries:
@@ -613,48 +445,29 @@ async def look_for_war_opportunities(context, country: str, my_power: float, bud
         if target_name in world.alliances.get(country, []):
             continue
         
-        target_power = world.get_power_rating(target_name)
-        target_profile = world.country_profiles.get(target_name)
-        
-        # Горные крепости не атакуем
-        if target_profile and target_profile.profile_type == "mountain_fortress":
-            world.news_history.append(
-                f"⛔ *{country}* отказывается от атаки на {target_name}: горы неприступны."
-            )
+        # Проверяем напряжённость
+        can_justify, reason = world.can_justify_war(country, target_name)
+        if not can_justify:
             continue
         
-        # Цель должна быть слабее с учётом её бонусов защиты
+        target_power = world.get_power_rating(target_name)
+        target_profile = world.country_profiles.get(target_name)
         target_defense = target_profile.bonuses.get("defense", 1.0) if target_profile else 1.0
-        effective_target_power = target_power * target_defense / season["attack_mod"]
+        effective_power = target_power * target_defense / season["attack_mod"]
         
-        if my_power > effective_target_power * 1.5:
-            targets.append((target_name, target_power, target_defense))
+        if my_power > effective_power * 1.5:
+            targets.append((target_name, target_power))
     
     if not targets:
         return
     
-    # Выбираем самую слабую цель
     targets.sort(key=lambda x: x[1])
-    target_name, target_power, target_defense = targets[0]
+    target_name, target_power = targets[0]
     
     if random.random() < 0.3:
         war_id = f"{country}_{target_name}_{world.turn}"
         
-        terrain = "plain"
-        if target_defense > 1.5:
-            terrain = "hills"
-        elif target_defense > 2.5:
-            terrain = "mountains"
-        
-        # Причина войны через AI
-        reason = await ai.ask_groq(
-            f"Ты — {country}. Ты хочешь объявить войну {target_name}. "
-            f"Твой профиль: {profile.profile_type}. Придумай ОДНУ реалистичную причину. "
-            f"Учти что сейчас {world.month} {world.year} года ({season['description']}).",
-            system_prompt=ai.get_rp_system_prompt(),
-            temperature=0.8,
-            max_tokens=100
-        )
+        can_justify, reason = world.can_justify_war(country, target_name)
         
         world.wars[war_id] = {
             "attacker": country,
@@ -662,7 +475,7 @@ async def look_for_war_opportunities(context, country: str, my_power: float, bud
             "reason": reason,
             "status": "active",
             "strategy": "blitzkrieg" if season["attack_mod"] > 1.0 else "balanced",
-            "terrain": terrain,
+            "terrain": "plain",
             "weather": "snow" if "зима" in season["description"] else "clear",
             "attacker_losses": 0,
             "defender_losses": 0,
@@ -672,16 +485,13 @@ async def look_for_war_opportunities(context, country: str, my_power: float, bud
         world.news_history.append(
             f"⚔️ *{country}* объявляет войну *{target_name}*!\n"
             f"📌 Причина: {reason}\n"
-            f"🌍 Местность: {TERRAIN_TYPES[terrain]['name']}\n"
+            f"🌍 Напряжённость: {world.world_tension:.1f}%\n"
             f"🌤️ Сезон: {season['description']}"
         )
         
         if context and saved_chats.get("war"):
             try:
-                await context.bot.send_message(
-                    chat_id=saved_chats["war"],
-                    text=world.news_history[-1]
-                )
+                await context.bot.send_message(chat_id=saved_chats["war"], text=world.news_history[-1])
             except:
                 pass
 
@@ -690,8 +500,6 @@ async def look_for_war_opportunities(context, country: str, my_power: float, bud
 # =====================================================================
 
 async def send_accumulated_news(context, country: str):
-    """Отправка накопленных новостей в новостной чат"""
-    
     if not context or not saved_chats.get("news"):
         world.news_history.clear()
         return
@@ -710,12 +518,10 @@ async def send_accumulated_news(context, country: str):
     world.news_history = world.news_history[3:]
 
 # =====================================================================
-# ИНИЦИАЛИЗАЦИЯ МИРА (АДАПТИВНАЯ)
+# ИНИЦИАЛИЗАЦИЯ
 # =====================================================================
 
 async def init_world():
-    """Инициализация мира с исследованием страны через интернет"""
-    
     country = get_country(ADMIN_ID) or "Швейцария"
     world.year = get_year(ADMIN_ID) or 2024
     world.month = get_rp_month()
@@ -723,53 +529,32 @@ async def init_world():
     print(f"🌍 Исследуем {country}...")
     info = await ai.research_country(country)
     
-    # Создаём профиль
     profile = CountryProfile(country, info)
     world.country_profiles[country] = profile
     
-    # Определяем стартовые параметры на основе профиля
     if profile.profile_type == "micro_state":
-        army_size = 5000
-        tanks = 10
-        gdp = 50_000_000_000
+        army_size, tanks, gdp = 5000, 10, 50_000_000_000
     elif profile.profile_type == "superpower":
-        army_size = 1_000_000
-        tanks = 5000
-        gdp = 20_000_000_000_000
+        army_size, tanks, gdp = 1_000_000, 5000, 20_000_000_000_000
     elif profile.profile_type == "mountain_fortress":
-        army_size = 50000
-        tanks = 100
-        gdp = 500_000_000_000
+        army_size, tanks, gdp = 50000, 100, 500_000_000_000
     elif profile.profile_type == "military_power":
-        army_size = 300_000
-        tanks = 2000
-        gdp = 2_000_000_000_000
+        army_size, tanks, gdp = 300_000, 2000, 2_000_000_000_000
     elif profile.profile_type == "naval_power":
-        army_size = 150_000
-        tanks = 500
-        gdp = 2_500_000_000_000
+        army_size, tanks, gdp = 150_000, 500, 2_500_000_000_000
     elif profile.profile_type == "economic_center":
-        army_size = 50000
-        tanks = 200
-        gdp = 5_000_000_000_000
+        army_size, tanks, gdp = 50000, 200, 5_000_000_000_000
     else:
-        army_size = 100_000
-        tanks = 1000
-        gdp = 1_000_000_000_000
+        army_size, tanks, gdp = 100_000, 1000, 1_000_000_000_000
     
     world.countries[country] = {
-        "name": country,
-        "army_size": army_size,
-        "tanks": tanks,
-        "aircraft": army_size // 200,
-        "ships": 100 if profile.profile_type == "naval_power" else 20,
+        "name": country, "army_size": army_size, "tanks": tanks,
+        "aircraft": army_size // 200, "ships": 100 if profile.profile_type == "naval_power" else 20,
         "nukes": 5000 if profile.profile_type == "superpower" else 0,
-        "gdp": gdp,
-        "tech_levels": world.technologies.copy(),
+        "gdp": gdp, "tech_levels": world.technologies.copy(),
         "info": info.get("summary", ""),
     }
     
-    # Соседи
     neighbors = {
         "Франция": {"army_size": 200000, "gdp": 3_000_000_000_000},
         "Германия": {"army_size": 180000, "gdp": 4_500_000_000_000},
@@ -781,44 +566,11 @@ async def init_world():
     for name, data in neighbors.items():
         if name != country:
             world.countries[name] = {
-                **data,
-                "tanks": data["army_size"] // 100,
-                "aircraft": data["army_size"] // 200,
-                "ships": 20,
-                "nukes": 0,
+                **data, "tanks": data["army_size"] // 100,
+                "aircraft": data["army_size"] // 200, "ships": 20, "nukes": 0,
                 "tech_levels": {k: random.randint(1, 5) for k in world.technologies},
             }
             world.country_profiles[name] = CountryProfile(name)
     
     print(f"✅ Мир инициализирован: {len(world.countries)} стран")
-    print(f"📊 Профиль {country}: {profile.profile_type}")
-    print(f"💪 Бонусы: {profile.bonuses.get('description', '')}")
-    print(f"⚠️ Ограничения: {profile.restrictions.get('description', '')}")
-    
     return info
-
-# =====================================================================
-# ТЕСТ
-# =====================================================================
-
-async def test_decision_engine():
-    """Тест Decision Engine"""
-    print("=" * 50)
-    print("ТЕСТ DECISION ENGINE (АДАПТИВНЫЙ)")
-    print("=" * 50)
-    
-    await init_world()
-    await decision_loop()
-    
-    country = get_country(ADMIN_ID) or "Швейцария"
-    profile = world.country_profiles.get(country)
-    
-    print(f"\n📊 Итоговая статистика:")
-    print(f"   Страна: {country}")
-    print(f"   Профиль: {profile.profile_type if profile else 'неизвестно'}")
-    print(f"   Сила: {world.get_power_rating(country):.1f}/100")
-    print(f"   Месяц: {world.month} {world.year}")
-    print(f"   Новостей: {len(world.news_history)}")
-
-if __name__ == "__main__":
-    asyncio.run(test_decision_engine())
