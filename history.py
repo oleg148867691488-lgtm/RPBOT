@@ -1,8 +1,9 @@
 """
-HISTORY.PY — БАЗА ДАННЫХ
-=========================
-Исправленная версия: INSERT OR REPLACE → ON CONFLICT DO UPDATE.
-Больше не перезаписывает поля NULL-ами.
+HISTORY.PY — БАЗА ДАННЫХ (ПОЛНАЯ ВЕРСИЯ)
+==========================================
+Сохранение пользователей, экономики, диалогов,
+вердиктов, мировых событий, технологий,
+и ПОЛНОГО СОСТОЯНИЯ МИРА.
 """
 
 import sqlite3
@@ -21,7 +22,7 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
-    # Таблица пользователей (страна, год)
+    # Таблица пользователей
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -54,7 +55,7 @@ def init_db():
         )
     ''')
     
-    # Таблица вердиктов (для истории)
+    # Таблица вердиктов
     c.execute('''
         CREATE TABLE IF NOT EXISTS verdicts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,19 +85,23 @@ def init_db():
         )
     ''')
     
+    # Таблица состояния мира (НОВАЯ)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS world_state (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    ''')
+    
     conn.commit()
     conn.close()
     print("✅ База данных инициализирована")
 
 # =====================================================================
-# ПОЛЬЗОВАТЕЛИ (ИСПРАВЛЕНО)
+# ПОЛЬЗОВАТЕЛИ
 # =====================================================================
 
 def save_country(user_id: int, country: str):
-    """
-    Сохраняет страну пользователя.
-    НЕ перезаписывает year в NULL!
-    """
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -107,10 +112,6 @@ def save_country(user_id: int, country: str):
     conn.close()
 
 def save_year(user_id: int, year: int):
-    """
-    Сохраняет год пользователя.
-    НЕ перезаписывает country в NULL!
-    """
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -121,10 +122,6 @@ def save_year(user_id: int, year: int):
     conn.close()
 
 def save_country_and_year(user_id: int, country: str, year: int):
-    """
-    Сохраняет страну и год одновременно.
-    Безопасный метод — не теряет данные.
-    """
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -135,7 +132,6 @@ def save_country_and_year(user_id: int, country: str, year: int):
     conn.close()
 
 def get_country(user_id: int) -> Optional[str]:
-    """Получить страну пользователя"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT country FROM users WHERE user_id = ?', (user_id,))
@@ -144,7 +140,6 @@ def get_country(user_id: int) -> Optional[str]:
     return row[0] if row else None
 
 def get_year(user_id: int) -> Optional[int]:
-    """Получить год пользователя"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT year FROM users WHERE user_id = ?', (user_id,))
@@ -153,44 +148,28 @@ def get_year(user_id: int) -> Optional[int]:
     return row[0] if row else 2024
 
 def get_user_info(user_id: int) -> Dict:
-    """Получить всю информацию о пользователе"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT country, year FROM users WHERE user_id = ?', (user_id,))
     row = c.fetchone()
     conn.close()
-    
-    if row:
-        return {"country": row[0], "year": row[1]}
-    return {"country": None, "year": 2024}
+    return {"country": row[0], "year": row[1]} if row else {"country": None, "year": 2024}
 
 # =====================================================================
 # ЭКОНОМИКА
 # =====================================================================
 
 def get_economy(user_id: int) -> Optional[Dict]:
-    """Получить экономику пользователя"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute(
-        'SELECT budget, steel, oil, grain, gold FROM economy WHERE user_id = ?',
-        (user_id,)
-    )
+    c.execute('SELECT budget, steel, oil, grain, gold FROM economy WHERE user_id = ?', (user_id,))
     row = c.fetchone()
     conn.close()
-    
     if row:
-        return {
-            "budget": row[0],
-            "steel": row[1],
-            "oil": row[2],
-            "grain": row[3],
-            "gold": row[4]
-        }
+        return {"budget": row[0], "steel": row[1], "oil": row[2], "grain": row[3], "gold": row[4]}
     return None
 
 def init_economy(user_id: int):
-    """Инициализировать экономику для нового пользователя"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -200,28 +179,14 @@ def init_economy(user_id: int):
     conn.commit()
     conn.close()
 
-def update_economy(
-    user_id: int,
-    budget: int = None,
-    steel: int = None,
-    oil: int = None,
-    grain: int = None,
-    gold: int = None
-):
-    """
-    Обновляет экономику пользователя.
-    Обновляются только переданные параметры (не None).
-    """
+def update_economy(user_id: int, budget: int = None, steel: int = None,
+                   oil: int = None, grain: int = None, gold: int = None):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
-    # Сначала убедимся что запись есть
     c.execute('INSERT OR IGNORE INTO economy (user_id) VALUES (?)', (user_id,))
     
-    # Собираем поля для обновления
     updates = []
     params = []
-    
     if budget is not None:
         updates.append("budget = ?")
         params.append(budget)
@@ -240,12 +205,8 @@ def update_economy(
     
     if updates:
         params.append(user_id)
-        c.execute(
-            f'UPDATE economy SET {", ".join(updates)} WHERE user_id = ?',
-            params
-        )
+        c.execute(f'UPDATE economy SET {", ".join(updates)} WHERE user_id = ?', params)
         conn.commit()
-    
     conn.close()
 
 # =====================================================================
@@ -253,7 +214,6 @@ def update_economy(
 # =====================================================================
 
 def save_dialog(chat_id: int, user_id: int, role: str, content: str):
-    """Сохранить сообщение в историю диалогов"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -263,25 +223,9 @@ def save_dialog(chat_id: int, user_id: int, role: str, content: str):
     conn.commit()
     conn.close()
 
-def get_dialog_history(
-    chat_id: int,
-    user_id: int = None,
-    limit: int = 50
-) -> List[Tuple]:
-    """
-    Получить историю диалогов.
-    
-    Args:
-        chat_id: ID чата
-        user_id: ID пользователя (если None — все)
-        limit: лимит сообщений
-    
-    Returns:
-        Список (role, content, timestamp) в хронологическом порядке
-    """
+def get_dialog_history(chat_id: int, user_id: int = None, limit: int = 50) -> List[Tuple]:
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
     if user_id:
         c.execute('''
             SELECT role, content, timestamp FROM dialog_history
@@ -294,17 +238,15 @@ def get_dialog_history(
             WHERE chat_id = ?
             ORDER BY timestamp DESC LIMIT ?
         ''', (chat_id, limit))
-    
     rows = c.fetchall()
     conn.close()
-    return rows[::-1]  # В хронологическом порядке
+    return rows[::-1]
 
 # =====================================================================
 # ВЕРДИКТЫ
 # =====================================================================
 
 def save_verdict(user_id: int, topic: str, verdict: str):
-    """Сохранить вердикт в историю"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -315,10 +257,8 @@ def save_verdict(user_id: int, topic: str, verdict: str):
     conn.close()
 
 def get_verdicts(user_id: int, topic: str = None, limit: int = 10) -> List[Tuple]:
-    """Получить вердикты пользователя"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
     if topic:
         c.execute('''
             SELECT topic, verdict, timestamp FROM verdicts
@@ -331,7 +271,6 @@ def get_verdicts(user_id: int, topic: str = None, limit: int = 10) -> List[Tuple
             WHERE user_id = ?
             ORDER BY timestamp DESC LIMIT ?
         ''', (user_id, limit))
-    
     rows = c.fetchall()
     conn.close()
     return rows
@@ -341,7 +280,6 @@ def get_verdicts(user_id: int, topic: str = None, limit: int = 10) -> List[Tuple
 # =====================================================================
 
 def save_world_event(event_type: str, description: str, countries_involved: str = None):
-    """Сохранить мировое событие (война, союз, санкции)"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -352,24 +290,19 @@ def save_world_event(event_type: str, description: str, countries_involved: str 
     conn.close()
 
 def get_world_events(event_type: str = None, limit: int = 20) -> List[Tuple]:
-    """Получить мировые события"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
     if event_type:
         c.execute('''
             SELECT event_type, description, countries_involved, timestamp
-            FROM world_events
-            WHERE event_type = ?
+            FROM world_events WHERE event_type = ?
             ORDER BY timestamp DESC LIMIT ?
         ''', (event_type, limit))
     else:
         c.execute('''
             SELECT event_type, description, countries_involved, timestamp
-            FROM world_events
-            ORDER BY timestamp DESC LIMIT ?
+            FROM world_events ORDER BY timestamp DESC LIMIT ?
         ''', (limit,))
-    
     rows = c.fetchall()
     conn.close()
     return rows
@@ -379,7 +312,6 @@ def get_world_events(event_type: str = None, limit: int = 20) -> List[Tuple]:
 # =====================================================================
 
 def save_technology(tech_name: str, level: int):
-    """Сохранить уровень технологии"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -390,7 +322,6 @@ def save_technology(tech_name: str, level: int):
     conn.close()
 
 def get_all_technologies() -> Dict[str, int]:
-    """Получить все технологии"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT tech_name, level FROM technologies')
@@ -399,37 +330,126 @@ def get_all_technologies() -> Dict[str, int]:
     return {row[0]: row[1] for row in rows}
 
 # =====================================================================
+# СОХРАНЕНИЕ И ЗАГРУЗКА ВСЕГО МИРА
+# =====================================================================
+
+def save_world_state(world_data: dict):
+    """Сохраняет всё состояние мира в БД."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS world_state (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    ''')
+    
+    # Сохраняем каждую часть мира как JSON
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('countries', json.dumps(world_data.get('countries', {}))))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('wars', json.dumps(world_data.get('wars', {}))))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('alliances', json.dumps(world_data.get('alliances', {}))))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('sanctions', json.dumps(world_data.get('sanctions', {}))))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('marionettes', json.dumps(world_data.get('marionettes', {}))))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('annexed', json.dumps(world_data.get('annexed', {}))))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('technologies', json.dumps(world_data.get('technologies', {}))))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('infrastructure', json.dumps(world_data.get('infrastructure', {}))))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('world_tension', str(world_data.get('world_tension', 0.0))))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('turn', str(world_data.get('turn', 0))))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('year', str(world_data.get('year', 2024))))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('month', world_data.get('month', 'январь')))
+    c.execute('INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)',
+              ('news_history', json.dumps(world_data.get('news_history', []))))
+    
+    conn.commit()
+    conn.close()
+    print("💾 Мир сохранён в БД")
+
+
+def load_world_state() -> dict:
+    """Загружает состояние мира из БД."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS world_state (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    ''')
+    
+    c.execute('SELECT key, value FROM world_state')
+    rows = c.fetchall()
+    conn.close()
+    
+    if not rows:
+        return {}
+    
+    data = {}
+    for key, value in rows:
+        if key in ['countries', 'wars', 'alliances', 'sanctions', 'marionettes', 
+                    'annexed', 'technologies', 'infrastructure', 'news_history']:
+            try:
+                data[key] = json.loads(value)
+            except:
+                data[key] = {}
+        elif key in ['world_tension']:
+            try:
+                data[key] = float(value)
+            except:
+                data[key] = 0.0
+        elif key in ['turn']:
+            try:
+                data[key] = int(value)
+            except:
+                data[key] = 0
+        elif key == 'year':
+            try:
+                data[key] = int(value)
+            except:
+                data[key] = 2024
+        else:
+            data[key] = value
+    
+    return data
+
+# =====================================================================
 # ОЧИСТКА
 # =====================================================================
 
 def clear_user_history(chat_id: int, user_id: int = None):
-    """Очистить историю диалогов"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
     if user_id:
-        c.execute(
-            'DELETE FROM dialog_history WHERE chat_id = ? AND user_id = ?',
-            (chat_id, user_id)
-        )
+        c.execute('DELETE FROM dialog_history WHERE chat_id = ? AND user_id = ?', (chat_id, user_id))
     else:
         c.execute('DELETE FROM dialog_history WHERE chat_id = ?', (chat_id,))
-    
     conn.commit()
     conn.close()
 
 def clear_all_history():
-    """Полная очистка всей истории (для вайпа)"""
+    """Полная очистка всего (для вайпа)"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
     c.execute('DELETE FROM dialog_history')
     c.execute('DELETE FROM verdicts')
     c.execute('DELETE FROM world_events')
     c.execute('DELETE FROM users')
     c.execute('DELETE FROM economy')
     c.execute('DELETE FROM technologies')
-    
+    c.execute('DELETE FROM world_state')
     conn.commit()
     conn.close()
     print("🗑️ Вся история очищена")
@@ -438,12 +458,10 @@ def clear_all_history():
 # АВТО-ИНИЦИАЛИЗАЦИЯ
 # =====================================================================
 
-# При импорте модуля сразу создаём таблицы
 try:
     init_db()
 except Exception as e:
     print(f"⚠️ Ошибка инициализации БД: {e}")
-
 
 # =====================================================================
 # ЭКСПОРТ
@@ -468,6 +486,8 @@ __all__ = [
     'get_world_events',
     'save_technology',
     'get_all_technologies',
+    'save_world_state',
+    'load_world_state',
     'clear_user_history',
     'clear_all_history',
 ]
