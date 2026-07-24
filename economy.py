@@ -67,7 +67,6 @@ async def trade_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Недостаточно денег. Нужно ${total_cost:,}, у вас ${economy['budget']:,}")
             return
         
-        # Проводим сделку
         update_economy(user_id, budget=economy['budget'] - total_cost, **{resource: economy[resource] + amount})
         await update.message.reply_text(
             f"✅ Куплено {amount} т. {resource} за ${total_cost:,}.\n"
@@ -109,7 +108,6 @@ async def trade_with_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Количество и цена должны быть числами.")
         return
     
-    # Проверяем, есть ли такой пользователь в чате
     try:
         target_user = await context.bot.get_chat_member(update.message.chat.id, target_username)
         target_id = target_user.user.id
@@ -117,20 +115,17 @@ async def trade_with_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Пользователь {target_username} не найден в чате.")
         return
     
-    # Проверяем ресурсы у покупателя
     economy = get_user_economy(user_id)
     if economy[resource] < amount:
         await update.message.reply_text(f"❌ У вас только {economy[resource]} т. {resource}")
         return
     
-    # Проверяем бюджет у продавца
     target_economy = get_user_economy(target_id)
     total_cost = price * amount
     if target_economy['budget'] < total_cost:
         await update.message.reply_text(f"❌ У {target_username} недостаточно денег.")
         return
     
-    # Проводим сделку
     update_economy(user_id, budget=economy['budget'] + total_cost, **{resource: economy[resource] - amount})
     update_economy(target_id, budget=target_economy['budget'] - total_cost, **{resource: target_economy[resource] + amount})
     
@@ -146,7 +141,6 @@ async def economy_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Доступ запрещён.")
         return
     
-    from history import get_economy
     economy = get_user_economy(user_id)
     text = (
         f"📊 *Экономика Швейцарии:*\n\n"
