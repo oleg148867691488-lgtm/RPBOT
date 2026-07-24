@@ -1,10 +1,14 @@
 import re
 from telegram import Update
 from telegram.ext import ContextTypes
-from config import saved_chats
+from config import saved_chats, bot_stopped
 from news import analyze_news, ask_ai
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # === ЕСЛИ БОТ ОСТАНОВЛЕН ===
+    if bot_stopped:
+        return
+
     chat_id = update.message.chat.id
     text = update.message.text
     user_id = update.message.from_user.id
