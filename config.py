@@ -23,8 +23,8 @@ ADMIN_USERNAME = "cakemogus"
 NEWS_INTERVAL_MINUTES = 30
 MAX_HISTORY = 50
 
-# === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ (для всех модулей) ===
-bot_stopped = False  # <--- СЮДА ПЕРЕНЕСЛИ
+# === ГЛОБАЛЬНАЯ ПЕРЕМЕННАЯ ДЛЯ ОСТАНОВКИ ===
+bot_stopped = False
 
 # === ФАЙЛ ДЛЯ СОХРАНЁННЫХ ЧАТОВ ===
 SAVED_CHATS_FILE = "saved_chats.json"
