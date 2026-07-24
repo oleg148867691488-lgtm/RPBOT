@@ -8,7 +8,6 @@ import datetime
 import pytz
 from dotenv import load_dotenv
 
-# === ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ===
 load_dotenv()
 
 # === ТОКЕНЫ ===
@@ -21,8 +20,11 @@ ADMIN_ID = 7184396483
 ADMIN_USERNAME = "cakemogus"
 
 # === НАСТРОЙКИ ===
-NEWS_INTERVAL_MINUTES = 30  # 4 новости за 2 часа
+NEWS_INTERVAL_MINUTES = 30
 MAX_HISTORY = 50
+
+# === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ (для всех модулей) ===
+bot_stopped = False  # <--- СЮДА ПЕРЕНЕСЛИ
 
 # === ФАЙЛ ДЛЯ СОХРАНЁННЫХ ЧАТОВ ===
 SAVED_CHATS_FILE = "saved_chats.json"
