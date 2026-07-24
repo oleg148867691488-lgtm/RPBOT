@@ -1,65 +1,43 @@
 import os
+import re
+import json
+import sqlite3
+import httpx
+import asyncio
+import datetime
+import pytz
 from dotenv import load_dotenv
 
+# === ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ===
 load_dotenv()
 
-# === ТОКЕН ТЕЛЕГРАМА ===
+# === ТОКЕНЫ ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-# === API-КЛЮЧИ ===
-GROQ_KEYS = [
-    os.getenv("GROQ_KEY_1"),
-    os.getenv("GROQ_KEY_2"),
-    os.getenv("GROQ_KEY_3"),
-    os.getenv("GROQ_KEY_4"),
-    os.getenv("GROQ_KEY_5"),
-]
-OLLAMA_KEY = os.getenv("OLLAMA_KEY")
-GEMINI_KEY = os.getenv("GEMINI_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # === АДМИН ===
 ADMIN_ID = 7184396483
+ADMIN_USERNAME = "cakemogus"
 
-# === СТАРТОВЫЕ ПАРАМЕТРЫ (их можно менять под сценарий) ===
-START_YEAR = 2022  # Стартовый год
-START_BUDGET = 10_000_000  # 10 млн $ (можно изменить)
-START_ARMY = 50_000  # 50 тыс. солдат
-START_TANKS = 100
-START_PLANES = 20
-START_SHIPS = 5
+# === НАСТРОЙКИ ===
+NEWS_INTERVAL_MINUTES = 30  # 4 новости за 2 часа
+MAX_HISTORY = 50
 
-# === ОГРАНИЧЕНИЯ (чтобы бот не делал глупостей) ===
-MAX_OPERATION_SIZE = 0.5  # Не более 50% армии на одну операцию
-MINIMUM_DEFENSE = 0.3     # Минимум 30% армии на оборону
+# === ФАЙЛ ДЛЯ СОХРАНЁННЫХ ЧАТОВ ===
+SAVED_CHATS_FILE = "saved_chats.json"
 
-# === ФУНКЦИИ ДЛЯ ПОЛУЧЕНИЯ РЕАЛЬНЫХ ЦЕН ===
-async def get_real_price(resource: str) -> int:
-    """
-    Запрашивает актуальную цену ресурса через Ollama или Gemini.
-    Возвращает цену в $ за тонну (или унцию для золота).
-    """
-    # Сначала пробуем Ollama
-    try:
-        # Здесь будет реальный запрос к Ollama с поиском в интернете
-        price = await ollama_search_price(resource)
-        if price:
-            return price
-    except:
-        pass
-    
-    # Если Ollama не справилась — пробуем Gemini
-    try:
-        price = await gemini_search_price(resource)
-        if price:
-            return price
-    except:
-        pass
-    
-    # Если всё упало — возвращаем примерную цену (как запасной вариант)
-    fallback_prices = {
-        "steel": 700,
-        "oil": 80,
-        "grain": 220,
-        "gold": 2000
-    }
-    return fallback_prices.get(resource, 500)
+def load_saved_chats():
+    if os.path.exists(SAVED_CHATS_FILE):
+        try:
+            with open(SAVED_CHATS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {"news": None, "war": None, "un": None}
+    return {"news": None, "war": None, "un": None}
+
+def save_saved_chats(chats):
+    with open(SAVED_CHATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(chats, f, ensure_ascii=False, indent=2)
+
+saved_chats = load_saved_chats()
