@@ -1,14 +1,19 @@
 """
-КОНФИГУРАЦИЯ БОТА
-==================
+КОНФИГУРАЦИЯ RP-БОТА
+=====================
+Groq (5 ключей) + Gemini 2.5 Flash + Ollama API (поиск)
 """
+
 import os
 import json
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# =====================================================================
 # AI ТОКЕНЫ
+# =====================================================================
+
 GROQ_KEYS = [
     os.getenv("GROQ_KEY_1"),
     os.getenv("GROQ_KEY_2"),
@@ -20,28 +25,46 @@ GROQ_KEYS = [
 GEMINI_KEY = os.getenv("GEMINI_KEY")
 OLLAMA_KEY = os.getenv("OLLAMA_KEY")
 
+# =====================================================================
 # URL API
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
+# =====================================================================
 
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+OLLAMA_URL = "https://ollama.com/api/web_search"
+
+# =====================================================================
 # TELEGRAM
+# =====================================================================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# =====================================================================
 # АДМИН
+# =====================================================================
+
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7184396483"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "cakemogus")
 
+# =====================================================================
 # НАСТРОЙКИ
+# =====================================================================
+
 NEWS_INTERVAL_MINUTES = int(os.getenv("NEWS_INTERVAL_MINUTES", "15"))
 DECISION_INTERVAL_MINUTES = int(os.getenv("DECISION_INTERVAL_MINUTES", "10"))
 MAX_HISTORY = int(os.getenv("MAX_HISTORY", "50"))
 
+# =====================================================================
 # ГЛОБАЛЬНЫЕ
+# =====================================================================
+
 bot_stopped = False
 AI_MODE = "iron_man"
 
-# ЧАТЫ
+# =====================================================================
+# СОХРАНЁННЫЕ ЧАТЫ
+# =====================================================================
+
 SAVED_CHATS_FILE = "saved_chats.json"
 
 def load_saved_chats() -> dict:
@@ -62,6 +85,10 @@ def save_saved_chats(chats: dict) -> None:
         pass
 
 saved_chats = load_saved_chats()
+
+# =====================================================================
+# ПРОВЕРКА
+# =====================================================================
 
 def check_config() -> bool:
     errors = []
