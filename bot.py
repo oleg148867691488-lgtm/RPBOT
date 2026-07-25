@@ -1,15 +1,16 @@
 """
-BOT.PY — RP БОТ ДЛЯ RENDER (ФИНАЛ)
-=====================================
+BOT.PY — RP БОТ ДЛЯ RENDER (ФИНАЛ С СОХРАНЕНИЕМ)
+====================================================
 Автономная страна с ИИ (Iron Man режим).
 python-telegram-bot v22 + Python 3.14.
-Исправлен event loop для Python 3.14.
+С авто-сохранением мира при выходе.
 """
 
 import asyncio
 import logging
 import os
 import sys
+import atexit
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -60,7 +61,7 @@ from commands import (
 from handlers import handle_message
 from news import generate_news_task
 from decision_engine import decision_loop, init_world, world
-from history import init_db, get_country
+from history import init_db, get_country, save_world_state
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -115,6 +116,40 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 app.add_error_handler(error_handler)
 
+# =====================================================================
+# ФУНКЦИЯ СОХРАНЕНИЯ МИРА
+# =====================================================================
+
+def save_world_on_exit():
+    """Сохраняет мир при выключении бота."""
+    try:
+        from decision_engine import world
+        save_world_state({
+            'countries': world.countries,
+            'wars': world.wars,
+            'alliances': world.alliances,
+            'sanctions': world.sanctions,
+            'marionettes': world.marionettes,
+            'annexed': world.annexed,
+            'technologies': world.technologies,
+            'infrastructure': world.infrastructure,
+            'world_tension': world.world_tension,
+            'turn': world.turn,
+            'year': world.year,
+            'month': world.month,
+            'news_history': world.news_history,
+        })
+        print("💾 Мир сохранён при выходе")
+    except Exception as e:
+        print(f"⚠️ Не удалось сохранить мир: {e}")
+
+# Регистрируем сохранение при выходе
+atexit.register(save_world_on_exit)
+
+# =====================================================================
+# ИНИЦИАЛИЗАЦИЯ
+# =====================================================================
+
 async def on_startup(app=None):
     logger.info("=" * 50)
     logger.info("🚀 ЗАПУСК RP-БОТА")
@@ -134,13 +169,30 @@ async def on_startup(app=None):
     
     try:
         scheduler = AsyncIOScheduler()
+        
+        def safe_run_news():
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.ensure_future(generate_news_task(app))
+            except:
+                pass
+        
+        def safe_run_decision():
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.ensure_future(decision_loop(app))
+            except:
+                pass
+        
         scheduler.add_job(
-            lambda: asyncio.ensure_future(generate_news_task(app)),
+            safe_run_news,
             trigger=IntervalTrigger(minutes=NEWS_INTERVAL_MINUTES),
             id="news_job", replace_existing=True
         )
         scheduler.add_job(
-            lambda: asyncio.ensure_future(decision_loop(app)),
+            safe_run_decision,
             trigger=IntervalTrigger(minutes=DECISION_INTERVAL_MINUTES),
             id="decision_job", replace_existing=True
         )
@@ -159,6 +211,10 @@ async def on_startup(app=None):
         logger.warning(f"⚠️ Уведомление: {e}")
     
     logger.info("✅ БОТ ЗАПУЩЕН")
+
+# =====================================================================
+# ЗАПУСК
+# =====================================================================
 
 if __name__ == "__main__":
     app.post_init = on_startup
