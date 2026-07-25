@@ -15,7 +15,7 @@ from threading import Thread
 from flask import Flask
 from telegram import Update
 from telegram.ext import (
-    Application,
+    Application, 
     CommandHandler,
     MessageHandler,
     filters,
