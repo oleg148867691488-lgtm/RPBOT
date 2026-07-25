@@ -1,8 +1,9 @@
 """
-COMMANDS.PY — ВСЕ КОМАНДЫ RP-БОТА (С РАЗБИВКОЙ)
-==================================================
+COMMANDS.PY — ВСЕ КОМАНДЫ RP-БОТА (С РАЗБИВКОЙ И ФИКСОМ СИЛЫ)
+==============================================================
 Публичные + Админские + Скрытые.
-Новости отправляются в сохранённый чат, не в личку.
+Новости отправляются в сохранённый чат.
+Исправлена инициализация страны (сила больше не 0.0).
 """
 
 import asyncio
@@ -85,7 +86,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 # =====================================================================
-# /COUNTRY
+# /COUNTRY (ИСПРАВЛЕНО: добавляет страну в мир!)
 # =====================================================================
 
 async def country_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -101,6 +102,7 @@ async def country_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     country = " ".join(args)
     user_id = update.message.from_user.id
     
+    # Сохраняем страну и базовую экономику в БД
     save_country(user_id, country)
     init_economy(user_id)
     
@@ -108,21 +110,50 @@ async def country_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         from decision_engine import world, CountryProfile
-        from economy import init_country_economy
+        from economy import init_country_economy, COUNTRY_ESTIMATES
         
+        # Исследуем страну через ИИ
         info = await ai.research_country(country)
         profile = CountryProfile(country, info)
         world.country_profiles[country] = profile
+        
+        # Инициализируем экономику (бюджет, ресурсы)
         await init_country_economy(user_id, country)
         
+        # === ГЛАВНЫЙ ФИКС: добавляем страну в мир с военными показателями ===
+        data = COUNTRY_ESTIMATES.get(country)
+        if not data:
+            data = {
+                "population": 50, "gdp": 0.5,
+                "army": 200, "tanks": 500,
+                "aircraft": 300, "ships": 30
+            }
+        
+        nukes = 5000 if country.lower() in ["россия", "сша", "ссср", "китай", "индия", "пакистан", "израиль", "франция", "великобритания", "кнр"] else 0
+        
+        world.countries[country] = {
+            "name": country,
+            "army_size": data.get("army", 200) * 1000,
+            "tanks": data.get("tanks", 500),
+            "aircraft": data.get("aircraft", 300),
+            "ships": data.get("ships", 30),
+            "nukes": nukes,
+            "gdp": data.get("gdp", 0.5) * 1_000_000_000_000,
+            "tech_levels": world.technologies.copy(),
+            "info": info.get("summary", ""),
+        }
+        # ================================================================
+        
+        power = world.get_power_rating(country)
         await update.message.reply_text(
             f"🌍 {country} - готово!\n\n"
             f"📊 Профиль: {profile.profile_type}\n"
             f"💪 {profile.bonuses.get('description', '')}\n"
-            f"⚠️ {profile.restrictions.get('description', '')}"
+            f"⚠️ {profile.restrictions.get('description', '')}\n"
+            f"⚡ Текущая сила: {power:.1f}/100"
         )
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Исследование не удалось: {str(e)[:100]}")
+        await update.message.reply_text(f"⚠️ Ошибка: {str(e)[:200]}")
 
 # =====================================================================
 # /YEAR
@@ -423,7 +454,7 @@ async def admin_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(text)
 
 # =====================================================================
-# /FORCE_NEWS (ОТПРАВЛЯЕТ В НОВОСТНОЙ ЧАТ!)
+# /FORCE_NEWS (отправляет в новостной чат)
 # =====================================================================
 
 async def force_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
