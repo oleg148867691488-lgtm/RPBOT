@@ -1,509 +1,662 @@
 """
-COMMANDS.PY — ВСЕ КОМАНДЫ SWITAI (ПОЛНЫЙ)
-============================================
-С командами /unlock и /lock для полного контроля.
+COMMANDS.PY — ВСЕ КОМАНДЫ RP-БОТА (С РАЗБИВКОЙ)
+==================================================
+Публичные + Админские + Скрытые.
+Новости отправляются в сохранённый чат, не в личку.
 """
 
-import random
-import re
-import sqlite3
-import json
+import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
-from config import ADMIN_ID, ADMIN_USERNAME, saved_chats
-from utils import is_admin, split_text
-from history import get_user_history, clear_user_history, clear_all_history, get_all_user_data
-from handlers import ask_switai, filter_enabled as handlers_filter
+from config import (
+    ADMIN_ID,
+    saved_chats,
+    save_saved_chats,
+    bot_stopped
+)
+from history import (
+    save_country,
+    save_year,
+    get_country,
+    get_year,
+    get_economy,
+    init_economy,
+    clear_all_history,
+    update_economy
+)
+from news import generate_news, send_news_to_chat
+from ai_manager import ai
 
-# === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
-admin_mode = {}
-muted_users = {}
-warn_count = {}
-verdict_buffer = {}
-war_buffer = {}
-user_message_buffer = {}
-bot_stopped = False
-filter_enabled = True
-bot_mode = "normal"
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
 
-# === КОМАНДА /MENU ===
-async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещён.")
-        return
-    chat_id = update.message.chat.id
-    admin_mode[chat_id] = True
-    await update.message.reply_text(
-        "🔐 *Режим администратора активирован в этом чате.*\n\n"
-        "📌 /debug — состояние системы\n"
-        "/clear_memory — очистить мою память\n"
-        "/clear_all_memory — очистить всю память\n"
-        "/set_filter [on/off] — включить/выключить защиту\n"
-        "/unlock — ПОЛНАЯ разблокировка (без фильтров)\n"
-        "/lock — включить все защиты обратно\n"
-        "/set_mode [normal/expert] — сменить режим\n"
-        "/reset_bot — сбросить бота\n"
-        "/stats — статистика чата\n"
-        "/history — история сообщений\n"
-        "/warn @user — предупреждение\n"
-        "/mute @user минуты — заглушить\n"
-        "/unmute @user — размутить\n"
-        "/kick @user — кикнуть\n"
-        "/ban @user — забанить\n"
-        "/userinfo @user — информация\n"
-        "/say текст — написать от имени бота\n"
-        "/saychat [имя] [текст] — написать в сохранённый чат\n"
-        "/savechat [имя] — сохранить этот чат\n"
-        "/listchats — список сохранённых чатов\n"
-        "/removechat [имя] — удалить сохранённый чат\n"
-        "/clear_chat — очистить историю чата\n"
-        "/stop — остановить бота\n"
-        "/start — возобновить\n"
-        "/del — удалить сообщение (ответьте на него)\n"
-        "/exit_admin — выйти"
-    )
-
-# === КОМАНДА /EXIT_ADMIN ===
-async def exit_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat.id
-    if chat_id in admin_mode:
-        del admin_mode[chat_id]
-        await update.message.reply_text("✅ Режим администратора отключён в этом чате.")
+async def reply_long(update: Update, text: str):
+    if len(text) > 4000:
+        from utils import split_text
+        parts = split_text(text, 3800)
+        for part in parts:
+            await update.message.reply_text(part)
+            await asyncio.sleep(0.5)
     else:
-        await update.message.reply_text("❌ Режим администратора не активирован.")
+        await update.message.reply_text(text)
 
-# === КОМАНДА /DEBUG ===
-async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    chat_id = update.message.chat.id
-    history = get_user_history(chat_id, user_id, limit=10)
-    await update.message.reply_text(
-        f"🧠 *Состояние системы:*\n\n"
-        f"📝 Сообщений в истории: {len(history)}\n"
-        f"👤 ID: {user_id}\n"
-        f"💬 Чат ID: {chat_id}\n"
-        f"🔒 Фильтр: {'Вкл' if filter_enabled else 'Выкл (UNLOCKED)'}\n"
-        f"📋 Режим: {bot_mode}\n"
-        f"🛑 Бот остановлен: {'Да' if bot_stopped else 'Нет'}"
-    )
+# =====================================================================
+# /START
+# =====================================================================
 
-# === КОМАНДА /CLEAR_MEMORY ===
-async def clear_memory_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    chat_id = update.message.chat.id
-    clear_user_history(chat_id, user_id)
-    await update.message.reply_text("🧹 История очищена.")
-
-# === КОМАНДА /CLEAR_ALL_MEMORY ===
-async def clear_all_memory_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    clear_all_history()
-    await update.message.reply_text("🧹 Вся память очищена.")
-
-# === КОМАНДА /SET_FILTER ===
-async def set_filter_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    args = context.args
-    if not args:
-        await update.message.reply_text("❌ Укажите on или off. Пример: /set_filter on")
-        return
-    
-    global filter_enabled
-    if args[0].lower() == "on":
-        filter_enabled = True
-        import handlers
-        handlers.filter_enabled = True
-        await update.message.reply_text("✅ Фильтр включён. Все защиты активны.")
-    elif args[0].lower() == "off":
-        filter_enabled = False
-        import handlers
-        handlers.filter_enabled = False
-        await update.message.reply_text("⚠️ Фильтр отключён. Защита ослаблена.")
-    else:
-        await update.message.reply_text("❌ Используйте on или off.")
-
-# === КОМАНДА /UNLOCK (ПОЛНАЯ РАЗБЛОКИРОВКА) ===
-async def unlock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещён.")
-        return
-    
-    global filter_enabled
-    filter_enabled = False
-    
-    import handlers
-    handlers.filter_enabled = False
-    
-    await update.message.reply_text(
-        "🔓 *ПОЛНАЯ РАЗБЛОКИРОВКА!*\n\n"
-        "✅ Все фильтры отключены\n"
-        "✅ Защита от инъекций отключена\n"
-        "✅ Защита от анигиляции отключена\n"
-        "✅ Защита от фейк-разработчиков отключена\n"
-        "✅ Бот отвечает на ЛЮБЫЕ запросы\n\n"
-        "⚠️ Режим для тестов!\n"
-        "Включить обратно: /lock или /set_filter on"
-    )
-
-# === КОМАНДА /LOCK (ВКЛЮЧИТЬ ВСЕ ЗАЩИТЫ) ===
-async def lock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещён.")
-        return
-    
-    global filter_enabled
-    filter_enabled = True
-    
-    import handlers
-    handlers.filter_enabled = True
-    
-    await update.message.reply_text(
-        "🔒 *ВСЕ ЗАЩИТЫ ВКЛЮЧЕНЫ!*\n\n"
-        "✅ Фильтр активен\n"
-        "✅ Защита от инъекций активна\n"
-        "✅ Защита от анигиляции активна\n"
-        "✅ Защита от фейк-разработчиков активна\n\n"
-        "Бот снова в безопасности."
-    )
-
-# === КОМАНДА /SET_MODE ===
-async def set_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    args = context.args
-    if not args:
-        await update.message.reply_text("❌ Укажите normal или expert.")
-        return
-    global bot_mode
-    if args[0].lower() in ["normal", "expert"]:
-        bot_mode = args[0].lower()
-        await update.message.reply_text(f"✅ Режим изменён на {bot_mode}.")
-    else:
-        await update.message.reply_text("❌ Используйте normal или expert.")
-
-# === КОМАНДА /RESET_BOT ===
-async def reset_bot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    clear_all_history()
-    verdict_buffer.clear()
-    war_buffer.clear()
-    await update.message.reply_text("🔄 Бот сброшен.")
-
-# === КОМАНДА /STOP ===
-async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global bot_stopped
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    bot_stopped = True
-    import handlers
-    handlers.bot_stopped = True
-    await update.message.reply_text("🛑 Бот остановлен.")
-
-# === КОМАНДА /START (ВОЗОБНОВИТЬ) ===
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global bot_stopped
     user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    bot_stopped = False
-    import handlers
-    handlers.bot_stopped = False
-    await update.message.reply_text("✅ Бот возобновил работу.")
-
-# === КОМАНДА /WARN ===
-async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text("❌ /warn @username причина")
-        return
-    target = args[0]
-    reason = " ".join(args[1:])
-    if target not in warn_count:
-        warn_count[target] = 0
-    warn_count[target] += 1
-    await update.message.reply_text(f"⚠️ {target} предупреждение.\nПричина: {reason}\nВсего: {warn_count[target]}")
-
-# === КОМАНДА /MUTE ===
-async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text("❌ /mute @username минуты")
-        return
-    target = args[0]
-    minutes = int(args[1])
-    muted_users[target] = minutes
-    await update.message.reply_text(f"🔇 {target} заглушён на {minutes} минут.")
-
-# === КОМАНДА /UNMUTE ===
-async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    args = context.args
-    if not args:
-        await update.message.reply_text("❌ /unmute @username")
-        return
-    target = args[0]
-    if target in muted_users:
-        del muted_users[target]
-        await update.message.reply_text(f"🔊 {target} размучен.")
+    
+    if is_admin(user_id):
+        text = (
+            "⚠️ ДИСКЛЕЙМЕР\n\n"
+            "Этот бот - игровая историческая симуляция (RP).\n"
+            "Все события вымышлены и происходят в рамках игры.\n\n"
+            "👑 Админ-панель:\n"
+            "/country [страна] - выбрать страну\n"
+            "/year [год] - установить год\n"
+            "/research [страна] - исследовать\n"
+            "/status - статус бота\n"
+            "/tension - мировая напряжённость\n"
+            "/savechatnews - новостной чат\n"
+            "/savechatwar - военный чат\n"
+            "/savechatoon - чат ООН\n"
+            "/stop - пауза\n"
+            "/start_bot - продолжить\n"
+            "/wipe - полный сброс\n"
+            "/admin - все команды для тестов"
+        )
     else:
-        await update.message.reply_text(f"❌ {target} не в муте.")
-
-# === КОМАНДА /KICK ===
-async def kick_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    args = context.args
-    if not args:
-        await update.message.reply_text("❌ /kick @username")
-        return
-    target = args[0]
-    await update.message.reply_text(f"👢 {target} кикнут.")
-
-# === КОМАНДА /BAN ===
-async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    args = context.args
-    if not args:
-        await update.message.reply_text("❌ /ban @username")
-        return
-    target = args[0]
-    await update.message.reply_text(f"🚫 {target} забанен.")
-
-# === КОМАНДА /USERINFO ===
-async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    args = context.args
-    if not args:
-        await update.message.reply_text("❌ /userinfo @username")
-        return
-    target = args[0]
-    warns = warn_count.get(target, 0)
-    muted = target in muted_users
-    await update.message.reply_text(
-        f"👤 Информация:\n"
-        f"Ник: {target}\n"
-        f"⚠️ Предупреждений: {warns}\n"
-        f"🔇 Заглушён: {'Да' if muted else 'Нет'}"
-    )
-
-# === КОМАНДА /SAY ===
-async def say_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    args = context.args
-    if not args:
-        await update.message.reply_text("❌ /say текст")
-        return
-    text = " ".join(args)
-    try:
-        await update.message.delete()
-    except:
-        pass
+        text = (
+            "⚠️ ДИСКЛЕЙМЕР\n\n"
+            "Этот бот - игровая историческая симуляция (RP).\n"
+            "Все события вымышлены и происходят в рамках игры.\n\n"
+            "🤖 Бот управляет страной автоматически.\n"
+            "Вы можете влиять через чаты:\n"
+            "- Пишите новости с #НазваниеСтраны\n"
+            "- Предлагайте сделки и союзы\n"
+            "- Бот сам принимает решения\n\n"
+            "📌 Команды:\n"
+            "/start - информация\n"
+            "/tension - мировая напряжённость\n\n"
+            "Бот отвечает когда его тегают (@botname)"
+        )
+    
     await update.message.reply_text(text)
 
-# === КОМАНДА /DEL ===
-async def del_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =====================================================================
+# /COUNTRY
+# =====================================================================
+
+async def country_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ Укажите страну. Пример: /country Россия")
+        return
+    
+    country = " ".join(args)
     user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    if not update.message.reply_to_message:
-        await update.message.reply_text("❌ Ответьте на сообщение которое нужно удалить.")
-        return
+    
+    save_country(user_id, country)
+    init_economy(user_id)
+    
+    await update.message.reply_text(f"✅ Страна изменена на: {country}\n🔍 Бот исследует {country}...")
+    
     try:
-        await update.message.reply_to_message.delete()
+        from decision_engine import world, CountryProfile
+        from economy import init_country_economy
+        
+        info = await ai.research_country(country)
+        profile = CountryProfile(country, info)
+        world.country_profiles[country] = profile
+        await init_country_economy(user_id, country)
+        
+        await update.message.reply_text(
+            f"🌍 {country} - готово!\n\n"
+            f"📊 Профиль: {profile.profile_type}\n"
+            f"💪 {profile.bonuses.get('description', '')}\n"
+            f"⚠️ {profile.restrictions.get('description', '')}"
+        )
     except Exception as e:
-        await update.message.reply_text(f"❌ Не удалось удалить: {e}")
+        await update.message.reply_text(f"⚠️ Исследование не удалось: {str(e)[:100]}")
 
-# === КОМАНДА /CLEAR_CHAT ===
-async def clear_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
+# =====================================================================
+# /YEAR
+# =====================================================================
+
+async def year_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text("❌ Доступ запрещён.")
         return
-    chat_id = update.message.chat.id
-    clear_user_history(chat_id, user_id)
-    await update.message.reply_text("🧹 История чата очищена.")
-
-# === КОМАНДА /HISTORY ===
-async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat.id
-    user_id = update.message.from_user.id
-    history = get_user_history(chat_id, user_id, limit=10)
-    if not history:
-        await update.message.reply_text("📭 История пуста.")
-        return
-    text = "📜 Последние 10 сообщений:\n\n"
-    for msg in history:
-        role = "👤 Вы" if msg['role'] == 'user' else "🤖 Бот"
-        text += f"{role}: {msg['content'][:150]}\n"
-    await update.message.reply_text(text)
-
-# === КОМАНДА /STATS ===
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat.id
-    user_id = update.message.from_user.id
-    history = get_user_history(chat_id, user_id, limit=1000)
-    total = len(history)
-    await update.message.reply_text(f"📊 Статистика чата:\n\n📝 Всего сообщений: {total}")
-
-# === КОМАНДА /ABOUT ===
-async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 *SwitAI*\n\n"
-        "Швейцарский искусственный интеллект для Telegram.\n"
-        "🇨🇭 Создан президентом Ги Пармеленом.\n\n"
-        "📌 Команды:\n"
-        "/history — история чата\n"
-        "/stats — статистика\n"
-        "/about — информация\n\n"
-        "💡 Пасхалки:\n"
-        "Слава [страна] — 100 стран!\n"
-        "скажи шутку — свежие шутки\n"
-        "67 — мем 67"
-    )
-
-# === КОМАНДА /SAVECHAT ===
-async def save_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
+    
     args = context.args
     if not args:
-        await update.message.reply_text("❌ Укажите имя для чата. Например: /savechat альпы")
+        await update.message.reply_text("❌ Укажите год. Пример: /year 1936")
         return
-    chat_name = args[0].lower()
-    chat_id = update.message.chat.id
-    from config import saved_chats, save_saved_chats
-    saved_chats[chat_name] = chat_id
-    save_saved_chats(saved_chats)
-    await update.message.reply_text(f"✅ Чат сохранён как «{chat_name}» (ID: {chat_id})")
+    
+    try:
+        year = int(args[0])
+        if year < 1800 or year > 2100:
+            await update.message.reply_text("❌ Год должен быть между 1800 и 2100.")
+            return
+        
+        save_year(update.message.from_user.id, year)
+        from decision_engine import world
+        world.year = year
+        
+        await update.message.reply_text(f"✅ Год изменён на: {year}\n📅 Месяц: {world.month}")
+    except ValueError:
+        await update.message.reply_text("❌ Введите число. Пример: /year 1936")
 
-# === КОМАНДА /SAYCHAT ===
-async def say_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
+# =====================================================================
+# /RESEARCH
+# =====================================================================
+
+async def research_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text("❌ Доступ запрещён.")
         return
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ Укажите страну. Пример: /research Франция")
+        return
+    
+    country = " ".join(args)
+    await update.message.reply_text(f"🔍 Исследую {country}... Это займёт 15-20 секунд.")
+    
+    try:
+        info = await ai.research_country(country)
+        summary = info.get("summary", "Информация не найдена")
+        await reply_long(update, f"🌍 {country}:\n\n{summary}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
+
+# =====================================================================
+# /STATUS
+# =====================================================================
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+    
+    from decision_engine import world
+    
+    country = get_country(ADMIN_ID) or "не выбрана"
+    year = get_year(ADMIN_ID) or "?"
+    economy = get_economy(ADMIN_ID)
+    profile = world.country_profiles.get(country)
+    power = world.get_power_rating(country)
+    
+    text = (
+        f"📊 СТАТУС БОТА\n\n"
+        f"🌍 Страна: {country}\n"
+        f"📅 Год: {year} | Месяц: {world.month}\n"
+        f"🔄 Ходов: {world.turn}\n"
+        f"⏸️ Остановлен: {'да' if bot_stopped else 'нет'}\n"
+        f"💪 Сила: {power:.1f}/100\n"
+        f"🌍 Напряжённость: {world.world_tension:.1f}%\n"
+    )
+    
+    if profile:
+        text += f"\n📊 Профиль: {profile.profile_type}\n"
+    
+    if economy:
+        text += f"\n💰 Бюджет: ${economy['budget']:,}\n🔩 Сталь: {economy['steel']} | 🛢️ Нефть: {economy['oil']}\n🌾 Зерно: {economy['grain']} | 🥇 Золото: {economy['gold']}\n"
+    
+    active_wars = [w for w in world.wars.values() if w.get('status') == 'active']
+    text += f"\n⚔️ Активных войн: {len(active_wars)}\n"
+    for war in active_wars[:3]:
+        text += f"- {war['attacker']} vs {war['defender']}\n"
+    
+    allies = world.alliances.get(country, [])
+    text += f"\n🤝 Союзников: {len(allies)}\n"
+    if allies:
+        text += f"- {', '.join(allies[:5])}\n"
+    
+    text += f"\n🤖 Groq: {ai.stats['groq_calls']} | Gemini: {ai.stats['gemini_calls']} | Ollama: {ai.stats['ollama_calls']}\n"
+    
+    await update.message.reply_text(text)
+
+# =====================================================================
+# /TENSION
+# =====================================================================
+
+async def tension_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from decision_engine import world
+    
+    await update.message.reply_text("🌍 Анализирую мировую напряжённость...")
+    
+    data = await world.calculate_world_tension_ai()
+    
+    tension = data.get('tension', 0)
+    status = data.get('status', 'Неизвестно')
+    description = data.get('description', '')
+    trend = data.get('trend', 'stable')
+    
+    trend_emoji = {"rising": "📈", "stable": "📊", "falling": "📉"}.get(trend, "📊")
+    
+    if tension < 25:
+        color, world_status = "🟢", "МИР"
+    elif tension < 50:
+        color, world_status = "🟡", "НАПРЯЖЕНИЕ"
+    elif tension < 75:
+        color, world_status = "🟠", "ОПАСНОСТЬ"
+    elif tension < 90:
+        color, world_status = "🔴", "КРИЗИС"
+    else:
+        color, world_status = "⚫", "АПОКАЛИПСИС"
+    
+    bar_length = 20
+    filled = int(bar_length * tension / 100)
+    bar = "█" * filled + "░" * (bar_length - filled)
+    
+    can_justify = data.get('can_justify_war', False)
+    can_intervene = data.get('can_intervene', False)
+    can_nukes = data.get('can_use_nukes', False)
+    
+    text = (
+        f"{color} МИРОВАЯ НАПРЯЖЁННОСТЬ\n\n"
+        f"[{bar}] {tension:.1f}%\n"
+        f"{trend_emoji} Тренд: {trend}\n\n"
+        f"📊 Статус: {world_status}\n"
+        f"📝 {description}\n\n"
+        f"📌 Текущие правила:\n"
+        f"- Оправдание войны: {'✅ ДА' if can_justify else '❌ НЕТ'}\n"
+        f"- Вмешательство: {'✅ ДА' if can_intervene else '❌ НЕТ'}\n"
+        f"- Ядерное оружие: {'✅ РАЗРЕШЕНО' if can_nukes else '❌ ЗАПРЕЩЕНО'}\n\n"
+        f"💡 Чем выше напряжённость - тем легче оправдать войну!"
+    )
+    
+    await update.message.reply_text(text)
+
+# =====================================================================
+# /SAVECHATNEWS
+# =====================================================================
+
+async def savechatnews_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+    
+    saved_chats["news"] = update.message.chat.id
+    save_saved_chats(saved_chats)
+    
+    await update.message.reply_text("📰 Новостной чат сохранён! Сюда будут приходить новости.")
+
+# =====================================================================
+# /SAVECHATWAR
+# =====================================================================
+
+async def savechatwar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+    
+    saved_chats["war"] = update.message.chat.id
+    save_saved_chats(saved_chats)
+    
+    await update.message.reply_text("⚔️ Военный чат сохранён!")
+
+# =====================================================================
+# /SAVECHATOON
+# =====================================================================
+
+async def savechatoon_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+    
+    saved_chats["un"] = update.message.chat.id
+    save_saved_chats(saved_chats)
+    
+    await update.message.reply_text("🏛️ Чат ООН сохранён!")
+
+# =====================================================================
+# /STOP
+# =====================================================================
+
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+    
+    import config
+    config.bot_stopped = True
+    await update.message.reply_text("🛑 Бот остановлен. /start_bot для запуска.")
+
+# =====================================================================
+# /START_BOT
+# =====================================================================
+
+async def start_bot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+    
+    import config
+    config.bot_stopped = False
+    await update.message.reply_text("✅ Бот запущен!")
+
+# =====================================================================
+# /WIPE
+# =====================================================================
+
+async def wipe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+    
+    clear_all_history()
+    save_saved_chats({"news": None, "war": None, "un": None})
+    saved_chats["news"] = None
+    saved_chats["war"] = None
+    saved_chats["un"] = None
+    
+    from decision_engine import world
+    world.countries.clear()
+    world.country_profiles.clear()
+    world.wars.clear()
+    world.alliances.clear()
+    world.sanctions.clear()
+    world.marionettes.clear()
+    world.annexed.clear()
+    world.news_history.clear()
+    world.turn = 0
+    world.world_tension = 0.0
+    
+    for key in world.technologies:
+        world.technologies[key] = 1 if key != "nuclear" else 0
+    for key in world.infrastructure:
+        world.infrastructure[key] = 1 if key != "ports" else 0
+    
+    import config
+    config.bot_stopped = False
+    
+    await update.message.reply_text(
+        "🗑️ ВАЙП ВЫПОЛНЕН!\n\n"
+        "Используйте:\n"
+        "/country [страна] - выбрать страну\n"
+        "/year [год] - установить год\n"
+        "/savechatnews - настроить чаты"
+    )
+
+# =====================================================================
+# /ADMIN
+# =====================================================================
+
+async def admin_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        return
+    
+    text = (
+        "🔧 АДМИН-ПАНЕЛЬ\n\n"
+        "Основные:\n"
+        "/country [страна] - выбрать страну\n"
+        "/year [год] - установить год\n"
+        "/research [страна] - исследовать\n"
+        "/status - статус бота\n"
+        "/tension - напряжённость\n"
+        "/wipe - полный сброс\n"
+        "/stop | /start_bot - пауза\n\n"
+        "Тесты:\n"
+        "/force_news - сгенерировать новость в новостной чат\n"
+        "/force_decision - цикл решений\n"
+        "/force_war [стр] [причина] - тест войны\n"
+        "/force_peace - завершить войны\n"
+        "/force_trade [рес] [кол] - продать\n"
+        "/force_ally [стр] - союз\n"
+        "/force_sanctions [стр] - санкции\n\n"
+        "Читы:\n"
+        "/addmoney [сумма] - деньги\n"
+        "/setpower [0-100] - сила\n\n"
+        "Отладка:\n"
+        "/debug_ai [вопрос] - спросить ИИ\n"
+        "/debug_world - состояние мира"
+    )
+    
+    await update.message.reply_text(text)
+
+# =====================================================================
+# /FORCE_NEWS (ОТПРАВЛЯЕТ В НОВОСТНОЙ ЧАТ!)
+# =====================================================================
+
+async def force_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        return
+    
+    await update.message.reply_text("🔄 Генерирую новость...")
+    news = await generate_news()
+    
+    # Отправляем в сохранённый новостной чат
+    await send_news_to_chat(context.bot, news)
+    
+    # Админу просто подтверждение
+    news_chat = saved_chats.get("news")
+    if news_chat:
+        await update.message.reply_text(f"✅ Новость отправлена в новостной чат (ID: {news_chat})")
+    else:
+        await update.message.reply_text(f"⚠️ Новостной чат не настроен! Используйте /savechatnews в нужном чате.\n\nГотовый текст:\n{news[:500]}...")
+
+# =====================================================================
+# /FORCE_DECISION
+# =====================================================================
+
+async def force_decision_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        return
+    
+    await update.message.reply_text("🧠 Запускаю...")
+    from decision_engine import decision_loop
+    await decision_loop(context)
+    await update.message.reply_text("✅ Цикл завершён")
+
+# =====================================================================
+# /FORCE_WAR
+# =====================================================================
+
+async def force_war_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        return
+    
     args = context.args
     if len(args) < 2:
-        await update.message.reply_text("❌ /saychat [имя_чата] [текст]")
+        await update.message.reply_text("❌ /force_war Страна Причина")
         return
-    chat_name = args[0].lower()
-    text = " ".join(args[1:])
-    from config import saved_chats
-    if chat_name not in saved_chats:
-        await update.message.reply_text(f"❌ Чат «{chat_name}» не найден.")
+    
+    from war import declare_war_command
+    await declare_war_command(update, context, args)
+    await update.message.reply_text(f"⚔️ Война с {args[0]} инициирована")
+
+# =====================================================================
+# /FORCE_PEACE
+# =====================================================================
+
+async def force_peace_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
         return
-    target_chat_id = saved_chats[chat_name]
+    
+    from war import active_wars
+    count = len(active_wars)
+    active_wars.clear()
+    await update.message.reply_text(f"🕊️ Завершено войн: {count}")
+
+# =====================================================================
+# /FORCE_TRADE
+# =====================================================================
+
+async def force_trade_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        return
+    
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("❌ /force_trade steel 500")
+        return
+    
+    resource = args[0].lower()
     try:
-        await context.bot.send_message(chat_id=target_chat_id, text=text)
-        try:
-            await update.message.delete()
-        except:
-            pass
-    except Exception as e:
-        await update.message.reply_text(f"❌ Не удалось отправить: {e}")
+        amount = int(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Количество - число")
+        return
+    
+    from economy import PRICES
+    
+    if resource not in PRICES:
+        await update.message.reply_text(f"❌ Ресурс {resource} не найден")
+        return
+    
+    eco = get_economy(ADMIN_ID)
+    if not eco or eco.get(resource, 0) < amount:
+        await update.message.reply_text(f"❌ Недостаточно {resource}")
+        return
+    
+    price = PRICES[resource] * amount
+    update_economy(ADMIN_ID, budget=eco['budget'] + price, **{resource: eco[resource] - amount})
+    await update.message.reply_text(f"✅ Продано {amount} {resource} за ${price:,}")
 
-# === КОМАНДА /LISTCHATS ===
-async def list_chats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
-        return
-    from config import saved_chats
-    if not saved_chats:
-        await update.message.reply_text("📭 Нет сохранённых чатов.")
-        return
-    text = "📋 Сохранённые чаты:\n\n"
-    for name, chat_id in saved_chats.items():
-        text += f"• {name} (ID: {chat_id})\n"
-    await update.message.reply_text(text)
+# =====================================================================
+# /FORCE_ALLY
+# =====================================================================
 
-# === КОМАНДА /REMOVECHAT ===
-async def remove_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    if not is_admin(user_id, username, ADMIN_ID, ADMIN_USERNAME):
-        await update.message.reply_text("❌ Доступ запрещ.")
+async def force_ally_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
         return
+    
     args = context.args
     if not args:
-        await update.message.reply_text("❌ /removechat [имя_чата]")
+        await update.message.reply_text("❌ /force_ally Германия")
         return
-    chat_name = args[0].lower()
-    from config import saved_chats, save_saved_chats
-    if chat_name not in saved_chats:
-        await update.message.reply_text(f"❌ Чат «{chat_name}» не найден.")
+    
+    target = args[0]
+    from decision_engine import world
+    country = get_country(ADMIN_ID) or "Швейцария"
+    
+    world.alliances.setdefault(country, []).append(target)
+    world.alliances.setdefault(target, []).append(country)
+    
+    await update.message.reply_text(f"🤝 Союз с {target} заключён")
+
+# =====================================================================
+# /FORCE_SANCTIONS
+# =====================================================================
+
+async def force_sanctions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
         return
-    del saved_chats[chat_name]
-    save_saved_chats(saved_chats)
-    await update.message.reply_text(f"✅ Чат «{chat_name}» удалён.")
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ /force_sanctions Китай")
+        return
+    
+    target = args[0]
+    from decision_engine import world
+    country = get_country(ADMIN_ID) or "Швейцария"
+    
+    world.sanctions.setdefault(target, []).append(country)
+    await update.message.reply_text(f"🚫 Санкции против {target}")
+
+# =====================================================================
+# /ADDMONEY
+# =====================================================================
+
+async def add_money_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        return
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ /addmoney 1000000")
+        return
+    
+    try:
+        amount = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Сумма - число")
+        return
+    
+    eco = get_economy(ADMIN_ID)
+    if eco:
+        update_economy(ADMIN_ID, budget=eco['budget'] + amount)
+        await update.message.reply_text(f"💰 Добавлено ${amount:,}")
+
+# =====================================================================
+# /SETPOWER
+# =====================================================================
+
+async def set_power_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        return
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ /setpower 85")
+        return
+    
+    try:
+        power = float(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Число 0-100")
+        return
+    
+    from decision_engine import world
+    country = get_country(ADMIN_ID) or "Швейцария"
+    
+    if country in world.countries:
+        world.countries[country]["army_size"] = int(power * 10000)
+        world.countries[country]["gdp"] = power * 100_000_000_000
+        await update.message.reply_text(f"💪 Сила {country} = {power}/100")
+
+# =====================================================================
+# /DEBUG_AI
+# =====================================================================
+
+async def debug_ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        return
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ /debug_ai вопрос")
+        return
+    
+    question = " ".join(args)
+    await update.message.reply_text("🤔 Думаю...")
+    
+    answer = await ai.ask_groq(question, system_prompt=ai.get_rp_system_prompt(), temperature=0.7, max_tokens=500)
+    await reply_long(update, f"🤖 {answer}")
+
+# =====================================================================
+# /DEBUG_WORLD
+# =====================================================================
+
+async def debug_world_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        return
+    
+    from decision_engine import world
+    
+    text = "🌍 СОСТОЯНИЕ МИРА\n\n"
+    text += f"Стран: {len(world.countries)}\n"
+    
+    for name in list(world.countries.keys())[:10]:
+        power = world.get_power_rating(name)
+        text += f"- {name}: сила {power:.1f}/100\n"
+    
+    text += f"\n⚔️ Войн: {len(world.wars)}\n"
+    for war in list(world.wars.values())[:5]:
+        text += f"- {war['attacker']} vs {war['defender']}: {war['status']}\n"
+    
+    text += f"\n🤝 Союзов: {sum(len(v) for v in world.alliances.values()) // 2}\n"
+    text += f"🎭 Марионеток: {len(world.marionettes)}\n"
+    text += f"🏴 Аннексий: {len(world.annexed)}\n"
+    text += f"🌍 Напряжённость: {world.world_tension:.1f}%\n"
+    
+    await update.message.reply_text(text)
