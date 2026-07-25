@@ -2,8 +2,8 @@
 AI MANAGER — ЕДИНЫЙ СЛОЙ ДЛЯ ВСЕХ AI-ЗАПРОСОВ
 ===============================================
 - 5 токенов Groq (round-robin при rate-limit)
-- Gemini 3.6 Flash (web search)
-- Ollama (резерв)
+- Gemini 2.5 Flash (web search)
+- Ollama API (поиск как в SwitAI)
 - Гео-ограничения в промптах
 """
 
@@ -132,34 +132,44 @@ class AIManager:
         return None
     
     async def search_ollama(self, query: str, context: str = None) -> Optional[str]:
-        if not self.ollama_key or not OLLAMA_URL:
+        """Поиск через Ollama API (как в SwitAI)."""
+        if not self.ollama_key:
             return None
         
-        prompt = f"Найди информацию: {query}\nОтветь на русском, с цифрами."
-        if context:
-            prompt = f"Контекст: {context}\n\n{prompt}"
-        
-        data = {"model": "llama3.2", "prompt": prompt, "stream": False,
-                "options": {"temperature": 0.3, "num_predict": 500}}
+        headers = {"Authorization": f"Bearer {self.ollama_key}"}
+        data = {"query": query, "max_results": 3}
         
         try:
-            async with httpx.AsyncClient(timeout=45.0) as client:
-                resp = await client.post(OLLAMA_URL, json=data)
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(OLLAMA_URL, headers=headers, json=data)
+                
                 if resp.status_code == 200:
                     self.stats["ollama_calls"] += 1
-                    return resp.json().get("response", None)
-                else:
+                    results = resp.json().get("results", [])
+                    if results:
+                        output = []
+                        for r in results[:3]:
+                            output.append(f"• {r.get('title', 'Без заголовка')}\n  {r.get('content', '')[:200]}...")
+                        return "\n\n".join(output)
                     return None
-        except:
+                else:
+                    print(f"❌ Ollama ошибка {resp.status_code}")
+                    return None
+        except Exception as e:
+            print(f"❌ Ollama исключение: {e}")
             return None
     
     async def search_web(self, query: str, context: str = None) -> str:
-        result = await self.search_gemini(query, context)
-        if result and len(result) > 20 and "не могу предоставить" not in result.lower():
-            return result
+        # Сначала Ollama
         result = await self.search_ollama(query, context)
         if result and len(result) > 20:
             return result
+        
+        # Потом Gemini
+        result = await self.search_gemini(query, context)
+        if result and len(result) > 20 and "не могу предоставить" not in result.lower():
+            return result
+        
         return "NO_DATA"
     
     async def research_country(self, country: str) -> Dict:
