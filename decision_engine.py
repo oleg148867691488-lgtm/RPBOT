@@ -3,6 +3,8 @@ DECISION ENGINE — МОЗГ ФЮРЕРА (IRON MAN MODE)
 ===============================================
 Адаптивный ИИ-правитель для ЛЮБОЙ страны.
 С ИИ-анализом мировой напряжённости.
+С авто-сохранением каждые 3 хода.
+С загрузкой мира при старте.
 """
 
 import random
@@ -24,7 +26,9 @@ from history import (
     get_economy,
     update_economy,
     init_economy,
-    save_country
+    save_country,
+    save_world_state,
+    load_world_state
 )
 
 # =====================================================================
@@ -170,22 +174,15 @@ class WorldState:
     # ================================================================
     
     async def calculate_world_tension_ai(self) -> dict:
-        """ИИ сам определяет мировую напряжённость"""
-        
         active_wars = [w for w in self.wars.values() if w.get('status') == 'active']
-        war_descriptions = []
-        for war in active_wars[:5]:
-            war_descriptions.append(f"- {war['attacker']} vs {war['defender']}")
+        war_descriptions = [f"- {w['attacker']} vs {w['defender']}" for w in active_wars[:5]]
         
         alliances_summary = []
         for c, allies_list in list(self.alliances.items())[:5]:
             if allies_list:
                 alliances_summary.append(f"- {c}: союз с {', '.join(allies_list[:3])}")
         
-        sanctions_summary = []
-        for target, imposers in list(self.sanctions.items())[:5]:
-            sanctions_summary.append(f"- Против {target}: санкции от {', '.join(imposers[:3])}")
-        
+        sanctions_summary = [f"- Против {t}: санкции от {', '.join(i[:3])}" for t, i in list(self.sanctions.items())[:5]]
         recent_news = self.news_history[-5:] if self.news_history else ["Новостей нет"]
         
         prompt = f"""Ты — аналитик мировой напряжённости. Год {self.year}.
@@ -206,7 +203,7 @@ class WorldState:
 Учти исторический контекст года (1939-1945 = высокая, 1914-1918 = высокая).
 
 Формат ответа — ТОЛЬКО JSON:
-{{"tension": 65.5, "status": "Предвоенное время", "description": "Кратко почему (1 предложение)", "can_justify_war": true, "can_intervene": true, "can_use_nukes": false, "trend": "rising"}}
+{{"tension": 65.5, "status": "Предвоенное время", "description": "Кратко почему", "can_justify_war": true, "can_intervene": true, "can_use_nukes": false, "trend": "rising"}}
 
 Ответь ТОЛЬКО JSON, без пояснений."""
 
@@ -225,7 +222,6 @@ class WorldState:
         return {"tension": self.world_tension, "status": "Неопределённо", "description": "ИИ не смог оценить", "can_justify_war": self.world_tension >= 25, "can_intervene": self.world_tension >= 50, "can_use_nukes": self.world_tension >= 90, "trend": "stable"}
     
     def can_justify_war(self, country: str, target: str) -> tuple:
-        """Проверяет может ли страна оправдать войну"""
         if target in self.alliances.get(country, []):
             return False, "🤝 Цель — ваш союзник"
         if target in self.marionettes and self.marionettes[target] == country:
@@ -292,6 +288,27 @@ async def decision_loop(context=None):
     season_effects = get_season_effects()
     world.turn += 1
     
+    # Авто-сохранение каждые 3 хода
+    if world.turn % 3 == 0:
+        try:
+            save_world_state({
+                'countries': world.countries,
+                'wars': world.wars,
+                'alliances': world.alliances,
+                'sanctions': world.sanctions,
+                'marionettes': world.marionettes,
+                'annexed': world.annexed,
+                'technologies': world.technologies,
+                'infrastructure': world.infrastructure,
+                'world_tension': world.world_tension,
+                'turn': world.turn,
+                'year': world.year,
+                'month': world.month,
+                'news_history': world.news_history,
+            })
+        except Exception as e:
+            print(f"⚠️ Ошибка авто-сохранения: {e}")
+    
     # Обновляем напряжённость через ИИ
     if world.turn % 3 == 0 or world.turn == 1:
         try:
@@ -306,11 +323,6 @@ async def decision_loop(context=None):
     print(f"🌍 Напряжённость: {world.world_tension:.1f}%")
     print(f"{'='*50}")
     
-    my_power = world.get_power_rating(country)
-    enemies = list(world.sanctions.get(country, []))
-    allies = world.alliances.get(country, [])
-    wars_active = [w for w in world.wars.values() if w.get('status') == 'active']
-    
     # Экономика
     await economic_decisions(context, country, economy)
     
@@ -320,7 +332,7 @@ async def decision_loop(context=None):
     # Инфраструктура
     await infrastructure_decisions(context, country, economy, profile)
     
-    # Военные решения (с проверкой напряжённости)
+    # Военные решения
     await military_decisions(context, country, economy, profile, season_effects)
     
     # Отправка новостей
@@ -410,31 +422,21 @@ async def infrastructure_decisions(context, country: str, economy: dict, profile
             world.news_history.append(f"🏗️ *{country}* построила {choice} (уровень {world.infrastructure[choice]})")
 
 # =====================================================================
-# ВОЕННЫЕ РЕШЕНИЯ (С НАПРЯЖЁННОСТЬЮ)
+# ВОЕННЫЕ РЕШЕНИЯ
 # =====================================================================
 
 async def military_decisions(context, country: str, economy: dict, profile: CountryProfile, season: dict):
     my_power = world.get_power_rating(country)
     budget = economy['budget']
     
-    # Проверяем активные войны
-    for war_id, war in list(world.wars.items()):
-        if war.get("status") != "active":
-            continue
-        
-        if country in [war["attacker"], war["defender"]]:
-            # Война уже идёт — просто продолжаем
-            continue
-    
-    # Ищем возможности для войны (с учётом напряжённости)
     if profile.profile_type == "micro_state":
-        return  # Микро-государства не нападают
+        return
     
     if season["attack_mod"] < 0.6 and profile.profile_type != "superpower":
-        return  # Зимой не нападаем
+        return
     
     if budget < 50_000_000:
-        return  # Нет денег на войну
+        return
     
     targets = []
     for target_name in world.countries:
@@ -445,7 +447,6 @@ async def military_decisions(context, country: str, economy: dict, profile: Coun
         if target_name in world.alliances.get(country, []):
             continue
         
-        # Проверяем напряжённость
         can_justify, reason = world.can_justify_war(country, target_name)
         if not can_justify:
             continue
@@ -518,7 +519,7 @@ async def send_accumulated_news(context, country: str):
     world.news_history = world.news_history[3:]
 
 # =====================================================================
-# ИНИЦИАЛИЗАЦИЯ
+# ИНИЦИАЛИЗАЦИЯ МИРА (С ЗАГРУЗКОЙ ИЗ БД)
 # =====================================================================
 
 async def init_world():
@@ -526,6 +527,29 @@ async def init_world():
     world.year = get_year(ADMIN_ID) or 2024
     world.month = get_rp_month()
     
+    # Пробуем загрузить сохранённый мир
+    try:
+        saved = load_world_state()
+        if saved and saved.get('countries'):
+            world.countries = saved.get('countries', {})
+            world.wars = saved.get('wars', {})
+            world.alliances = saved.get('alliances', {})
+            world.sanctions = saved.get('sanctions', {})
+            world.marionettes = saved.get('marionettes', {})
+            world.annexed = saved.get('annexed', {})
+            world.technologies = saved.get('technologies', world.technologies)
+            world.infrastructure = saved.get('infrastructure', world.infrastructure)
+            world.world_tension = saved.get('world_tension', 0.0)
+            world.turn = saved.get('turn', 0)
+            world.year = saved.get('year', world.year)
+            world.month = saved.get('month', world.month)
+            world.news_history = saved.get('news_history', [])
+            print(f"✅ Мир загружен из БД (ход {world.turn})")
+            return {"summary": "Мир загружен из сохранения"}
+    except Exception as e:
+        print(f"⚠️ Не удалось загрузить мир: {e}")
+    
+    # Если нет сохранения — создаём новый мир
     print(f"🌍 Исследуем {country}...")
     info = await ai.research_country(country)
     
