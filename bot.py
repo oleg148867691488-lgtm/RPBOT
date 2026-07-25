@@ -1,8 +1,8 @@
 """
-BOT.PY — RP БОТ ДЛЯ RENDER (ФИНАЛ С СОХРАНЕНИЕМ)
-====================================================
+BOT.PY — RP БОТ ДЛЯ RENDER (ФИНАЛ С FLASK)
+=============================================
 Автономная страна с ИИ (Iron Man режим).
-python-telegram-bot v22 + Python 3.14.
+Flask для Health Check (cron-job).
 С авто-сохранением мира при выходе.
 """
 
@@ -11,6 +11,8 @@ import logging
 import os
 import sys
 import atexit
+from threading import Thread
+from flask import Flask
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -63,11 +65,34 @@ from news import generate_news_task
 from decision_engine import decision_loop, init_world, world
 from history import init_db, get_country, save_world_state
 
+# =====================================================================
+# FLASK ДЛЯ HEALTH CHECK
+# =====================================================================
+
+app_web = Flask(__name__)
+
+@app_web.route('/')
+@app_web.route('/health')
+def health():
+    return "OK", 200
+
+def run_web():
+    port = int(os.environ.get("PORT", "10000"))
+    app_web.run(host='0.0.0.0', port=port)
+
+# =====================================================================
+# НАСТРОЙКА ЛОГГИРОВАНИЯ
+# =====================================================================
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# =====================================================================
+# TELEGRAM БОТ
+# =====================================================================
 
 app = Application.builder().token(BOT_TOKEN).build()
 
@@ -117,11 +142,10 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app.add_error_handler(error_handler)
 
 # =====================================================================
-# ФУНКЦИЯ СОХРАНЕНИЯ МИРА
+# СОХРАНЕНИЕ МИРА ПРИ ВЫХОДЕ
 # =====================================================================
 
 def save_world_on_exit():
-    """Сохраняет мир при выключении бота."""
     try:
         from decision_engine import world
         save_world_state({
@@ -137,13 +161,12 @@ def save_world_on_exit():
             'turn': world.turn,
             'year': world.year,
             'month': world.month,
-            'news_history': world.news_history,
+            'news_history': world.news_history[-50:] if len(world.news_history) > 50 else world.news_history,
         })
         print("💾 Мир сохранён при выходе")
     except Exception as e:
         print(f"⚠️ Не удалось сохранить мир: {e}")
 
-# Регистрируем сохранение при выходе
 atexit.register(save_world_on_exit)
 
 # =====================================================================
@@ -217,16 +240,22 @@ async def on_startup(app=None):
 # =====================================================================
 
 if __name__ == "__main__":
+    # Запускаем Flask для Health Check
+    thread = Thread(target=run_web)
+    thread.daemon = True
+    thread.start()
+    logger.info(f"✅ Flask Health Check запущен на порту {os.environ.get('PORT', '10000')}")
+    
+    # Запускаем бота
     app.post_init = on_startup
     
-    port = int(os.environ.get("PORT", "8080"))
     webhook_url = os.environ.get("WEBHOOK_URL", None)
     
     if webhook_url:
         logger.info(f"🔗 Вебхук: {webhook_url}")
         app.run_webhook(
             listen="0.0.0.0",
-            port=port,
+            port=int(os.environ.get("PORT", "10000")),
             webhook_url=webhook_url,
             drop_pending_updates=True
         )
