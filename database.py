@@ -1,1 +1,276 @@
+"""
+DATABASE.PY — БАЗА ЗНАНИЙ ДЛЯ РП-БОТА (TURSO)
+=====================================
+Облачная SQLite через Turso. Данные не стираются при перезапуске Render.
+"""
 
+import os
+import time
+from datetime import datetime
+
+from config import TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
+
+
+# =====================================================================
+# ПОДКЛЮЧЕНИЕ
+# =====================================================================
+
+if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
+    import libsql_client
+    DB_CLIENT = libsql_client.create_client_sync(
+        url=TURSO_DATABASE_URL,
+        auth_token=TURSO_AUTH_TOKEN
+    )
+else:
+    # Локальный fallback (для тестов на компе без Turso)
+    import sqlite3
+    DB_CLIENT = None
+    LOCAL_DB = "facts.db"
+
+
+def execute(query: str, params: tuple = ()):
+    """Универсальное выполнение запроса: Turso или локальный SQLite."""
+    if DB_CLIENT:
+        return DB_CLIENT.execute(query, params)
+    else:
+        conn = sqlite3.connect(LOCAL_DB)
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(query, params)
+        conn.commit()
+        rows = cur.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+
+# =====================================================================
+# ИНИЦИАЛИЗАЦИЯ ТАБЛИЦ
+# =====================================================================
+
+def init_db():
+    execute("""
+    CREATE TABLE IF NOT EXISTS facts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tag TEXT NOT NULL,
+        text TEXT NOT NULL,
+        author_id INTEGER,
+        author_name TEXT,
+        year INTEGER,
+        is_verdict INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
+    """)
+    execute("CREATE INDEX IF NOT EXISTS idx_facts_tag ON facts(tag);")
+    execute("CREATE INDEX IF NOT EXISTS idx_facts_verdict ON facts(is_verdict);")
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        is_summary INTEGER DEFAULT 0,
+        is_archived INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
+    """)
+    execute("CREATE INDEX IF NOT EXISTS idx_history_user ON history(chat_id, user_id, is_archived);")
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS cooldowns (
+        user_id INTEGER PRIMARY KEY,
+        last_request REAL NOT NULL DEFAULT 0,
+        last_verdict REAL NOT NULL DEFAULT 0
+    );
+    """)
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    """)
+
+
+# =====================================================================
+# SETTINGS (чат для фактов и прочее)
+# =====================================================================
+
+def set_setting(key: str, value: str):
+    """Устанавливает/обновляет настройку."""
+    execute(
+        """INSERT INTO settings (key, value) VALUES (?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+        (key, value)
+    )
+
+
+def get_setting(key: str, default: str = None):
+    """Возвращает значение настройки или default."""
+    rows = execute("SELECT value FROM settings WHERE key = ?", (key,))
+    if rows:
+        return rows[0]["value"]
+    return default
+
+
+def delete_setting(key: str):
+    execute("DELETE FROM settings WHERE key = ?", (key,))
+
+
+# =====================================================================
+# ФАКТЫ И ВЕРДИКТЫ
+# =====================================================================
+
+def add_fact(tag: str, text: str, author_id: int = 0, author_name: str = "",
+             year: int = None, is_verdict: bool = False) -> int:
+    execute(
+        """INSERT INTO facts (tag, text, author_id, author_name, year, is_verdict, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (tag.lower().strip(), text.strip(), author_id, author_name, year,
+         1 if is_verdict else 0, datetime.utcnow().isoformat())
+    )
+    rows = execute("SELECT last_insert_rowid() AS id;")
+    return rows[0]["id"] if rows else 0
+
+
+def get_facts_by_tag(tag: str, include_verdicts: bool = True, limit: int = 200):
+    tag = tag.lower().strip()
+    if include_verdicts:
+        return execute(
+            "SELECT * FROM facts WHERE tag = ? ORDER BY is_verdict DESC, created_at ASC LIMIT ?",
+            (tag, limit)
+        )
+    return execute(
+        "SELECT * FROM facts WHERE tag = ? AND is_verdict = 0 ORDER BY created_at ASC LIMIT ?",
+        (tag, limit)
+    )
+
+
+def get_facts_by_year(tag: str, year: int, tolerance: int = 0):
+    tag = tag.lower().strip()
+    return execute(
+        """SELECT * FROM facts
+           WHERE tag = ? AND year IS NOT NULL AND year BETWEEN ? AND ?
+           ORDER BY year ASC""",
+        (tag, year - tolerance, year + tolerance)
+    )
+
+
+def get_all_tags():
+    return execute(
+        """SELECT tag, COUNT(*) AS cnt, COALESCE(SUM(is_verdict), 0) AS verdicts
+           FROM facts GROUP BY tag ORDER BY cnt DESC"""
+    )
+
+
+def search_facts(query: str, limit: int = 50):
+    return execute(
+        "SELECT * FROM facts WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?",
+        (f"%{query}%", limit)
+    )
+
+
+def delete_fact(fact_id: int) -> bool:
+    execute("DELETE FROM facts WHERE id = ?", (fact_id,))
+    return True
+
+
+def clear_by_tag(tag: str) -> int:
+    execute("DELETE FROM facts WHERE tag = ?", (tag.lower().strip(),))
+    return 1
+
+
+def clear_all_facts():
+    execute("DELETE FROM facts")
+
+
+def get_stats():
+    total    = execute("SELECT COUNT(*) AS cnt FROM facts;")[0]["cnt"]
+    verdicts = execute("SELECT COUNT(*) AS cnt FROM facts WHERE is_verdict = 1;")[0]["cnt"]
+    tags     = execute("SELECT COUNT(DISTINCT tag) AS cnt FROM facts;")[0]["cnt"]
+    return {"total": total, "verdicts": verdicts, "tags": tags}
+
+
+# =====================================================================
+# ИСТОРИЯ ДИАЛОГА
+# =====================================================================
+
+def add_history(chat_id: int, user_id: int, role: str, content: str, is_summary: bool = False):
+    execute(
+        """INSERT INTO history (chat_id, user_id, role, content, is_summary, is_archived, created_at)
+           VALUES (?, ?, ?, ?, ?, 0, ?)""",
+        (chat_id, user_id, role, content, 1 if is_summary else 0, datetime.utcnow().isoformat())
+    )
+
+
+def get_history(chat_id: int, user_id: int, limit: int = 15):
+    rows = execute(
+        """SELECT role, content, is_summary FROM history
+           WHERE chat_id = ? AND user_id = ? AND is_archived = 0
+           ORDER BY id DESC LIMIT ?""",
+        (chat_id, user_id, limit)
+    )
+    return list(reversed(rows))
+
+
+def get_old_messages_for_summary(chat_id: int, user_id: int, batch: int = 20):
+    return execute(
+        """SELECT id, role, content FROM history
+           WHERE chat_id = ? AND user_id = ? AND is_archived = 0 AND is_summary = 0
+           ORDER BY id ASC LIMIT ?""",
+        (chat_id, user_id, batch)
+    )
+
+
+def archive_messages(message_ids: list):
+    if not message_ids:
+        return
+    for mid in message_ids:
+        execute("UPDATE history SET is_archived = 1 WHERE id = ?", (mid,))
+
+
+def count_active_history(chat_id: int, user_id: int) -> int:
+    rows = execute(
+        "SELECT COUNT(*) AS cnt FROM history WHERE chat_id = ? AND user_id = ? AND is_archived = 0",
+        (chat_id, user_id)
+    )
+    return rows[0]["cnt"] if rows else 0
+
+
+def clear_history(chat_id: int = None, user_id: int = None):
+    if chat_id and user_id:
+        execute("DELETE FROM history WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+    elif chat_id:
+        execute("DELETE FROM history WHERE chat_id = ?", (chat_id,))
+    else:
+        execute("DELETE FROM history")
+
+
+# =====================================================================
+# КУЛДАУНЫ (антиспам)
+# =====================================================================
+
+def check_cooldown(user_id: int, cooldown_seconds: float, is_verdict: bool = False) -> bool:
+    """True — можно писать. False — ещё в кулдауне."""
+    now = time.time()
+    rows = execute("SELECT last_request, last_verdict FROM cooldowns WHERE user_id = ?", (user_id,))
+
+    if rows:
+        last = rows[0]["last_verdict"] if is_verdict else rows[0]["last_request"]
+        if now - last < cooldown_seconds:
+            return False
+
+        if is_verdict:
+            execute("UPDATE cooldowns SET last_verdict = ? WHERE user_id = ?", (now, user_id))
+        else:
+            execute("UPDATE cooldowns SET last_request = ? WHERE user_id = ?", (now, user_id))
+    else:
+        execute(
+            "INSERT INTO cooldowns (user_id, last_request, last_verdict) VALUES (?, ?, ?)",
+            (user_id, 0 if is_verdict else now, now if is_verdict else 0)
+        )
+    return True
+
+
+# === Инициализация при импорте ===
+init_db()
