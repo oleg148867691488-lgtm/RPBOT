@@ -1,16 +1,18 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА
+HANDLERS.PY — ЛОГИКА РП-БОТА (С ИНТЕГРАЦИЕЙ WORLD BANK)
 =====================================
 - Сбор фактов через #тег
 - Вопросы с памятью и поиском
 - Вердикты через deepseek-r1
 - Fallback по 3 ключам Groq + Gemini
 - Суммаризация истории через llama-3.1
+- Автоматическое получение экономических данных из World Bank API
 """
 
 import re
 import httpx
 import asyncio
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -25,6 +27,38 @@ from config import (
 )
 import database as db
 
+# =====================================================================
+# КОНСТАНТЫ WORLD BANK
+# =====================================================================
+
+WB_BASE_URL = "https://api.worldbank.org/v2"
+
+# Словарь стран (ISO 3166-1 alpha-2 / alpha-3 и русские названия)
+COUNTRY_CODES = {
+    "россия": "RUS", "рф": "RUS", "russia": "RUS",
+    "сша": "USA", "соединенные штаты": "USA", "америка": "USA", "usa": "USA",
+    "китай": "CHN", "китай": "CHN", "china": "CHN",
+    "германия": "DEU", "germany": "DEU",
+    "франция": "FRA", "france": "FRA",
+    "великобритания": "GBR", "англия": "GBR", "uk": "GBR",
+    "япония": "JPN", "japan": "JPN",
+    "индия": "IND", "india": "IND",
+    "бразилия": "BRA", "brazil": "BRA",
+    "украина": "UKR", "ukraine": "UKR",
+    "беларусь": "BLR", "belarus": "BLR",
+    "казахстан": "KAZ", "kazakhstan": "KAZ",
+}
+
+# Словарь индикаторов (русские названия -> коды World Bank)
+INDICATOR_CODES = {
+    "ввп": "NY.GDP.MKTP.CD",
+    "gdp": "NY.GDP.MKTP.CD",
+    "ввп на душу": "NY.GDP.PCAP.CD",
+    "население": "SP.POP.TOTL",
+    "инфляция": "FP.CPI.TOTL.ZG",
+    "безработица": "SL.UEM.TOTL.ZS",
+    "продолжительность жизни": "SP.DYN.LE00.IN",
+}
 
 # =====================================================================
 # УТИЛИТЫ
@@ -50,13 +84,111 @@ def get_facts_chat_id() -> int:
 
 
 # =====================================================================
+# ИНТЕГРАЦИЯ С WORLD BANK
+# =====================================================================
+
+async def fetch_world_bank_data(country_code: str, indicator_code: str, year: int = None) -> str | None:
+    """
+    Получает данные из World Bank API.
+    Возвращает строку с результатом или None, если данных нет.
+    """
+    url = f"{WB_BASE_URL}/country/{country_code}/indicator/{indicator_code}"
+    params = {"format": "json", "per_page": 100}
+
+    if year:
+        params["date"] = str(year)
+    else:
+        params["MRV"] = 1  # Most Recent Value — если год не указан, берём последний доступный
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(url, params=params)
+            if resp.status_code != 200:
+                return None
+
+            data = resp.json()
+            # Ответ World Bank: [metadata, [данные]]
+            if not isinstance(data, list) or len(data) < 2:
+                return None
+
+            records = data[1]
+            if not records:
+                return None
+
+            # Фильтруем записи с непустым значением
+            valid_records = [r for r in records if r.get("value") is not None]
+            if not valid_records:
+                return None
+
+            # Берём первую валидную запись
+            record = valid_records[0]
+            value = record["value"]
+            date = record["date"]
+            indicator_name = record["indicator"]["value"]
+            country_name = record["country"]["value"]
+
+            # Форматируем число (если это не проценты)
+            if indicator_code in ["FP.CPI.TOTL.ZG", "SL.UEM.TOTL.ZS"]:
+                formatted_value = f"{value:.1f}%"
+            else:
+                formatted_value = f"{value:,.0f}".replace(",", " ")
+
+            return f"{indicator_name} для {country_name} ({date}): {formatted_value}"
+
+    except Exception as e:
+        print(f"⚠️ World Bank ошибка: {str(e)[:80]}")
+        return None
+
+
+async def get_economic_context(text: str) -> str | None:
+    """
+    Анализирует текст и возвращает экономический контекст из World Bank,
+    если в тексте упоминается страна и показатель.
+    """
+    text_lower = text.lower()
+
+    # Ищем страну
+    found_country_code = None
+    for country_name, code in COUNTRY_CODES.items():
+        if country_name in text_lower:
+            found_country_code = code
+            break
+
+    if not found_country_code:
+        return None
+
+    # Ищем показатель
+    found_indicator_code = None
+    for indicator_name, code in INDICATOR_CODES.items():
+        if indicator_name in text_lower:
+            found_indicator_code = code
+            break
+
+    if not found_indicator_code:
+        return None
+
+    # Ищем год (4 цифры)
+    year = None
+    year_match = re.search(r"\b(19\d{2}|20\d{2})\b", text)
+    if year_match:
+        year = int(year_match.group(1))
+
+    # Запрашиваем данные
+    result = await fetch_world_bank_data(found_country_code, found_indicator_code, year)
+    if result:
+        return f"[ДАННЫЕ WORLD BANK]: {result}"
+
+    return None
+
+
+# =====================================================================
 # GROQ С FALLBACK
 # =====================================================================
 
 async def call_groq(primary_key: str, model: str, messages: list, temperature: float = 0.3) -> str | None:
     """Пробует primary_key, при 429/ошибке — перебирает остальные ключи из GROQ_ALL_KEYS."""
     keys_to_try = [primary_key] + [k for k in GROQ_ALL_KEYS if k != primary_key]
-    keys_to_try = [k for k in keys_to_try if k]  # убираем None
+    keys_to_try = [k for k in keys_to_try if k]
 
     for i, key in enumerate(keys_to_try):
         try:
@@ -136,7 +268,6 @@ async def search_web(query: str) -> str | None:
 # =====================================================================
 
 async def maybe_summarize_history(chat_id: int, user_id: int):
-    """Если активной истории слишком много — сжимает старые сообщения в резюме."""
     count = db.count_active_history(chat_id, user_id)
     if count < HISTORY_SUMMARIZE_THRESHOLD:
         return
@@ -157,9 +288,8 @@ async def maybe_summarize_history(chat_id: int, user_id: int):
     )
 
     if not summary:
-        return  # не удалось сжать — оставляем как есть
+        return
 
-    # Архивируем старые, добавляем резюме
     db.archive_messages([m["id"] for m in old_msgs])
     db.add_history(chat_id, user_id, "system", f"[СЖАТАЯ ИСТОРИЯ] {summary}", is_summary=True)
 
@@ -169,11 +299,9 @@ async def maybe_summarize_history(chat_id: int, user_id: int):
 # =====================================================================
 
 async def save_fact_from_message(update: Update, text: str) -> bool:
-    """Парсит '#тег текст' и сохраняет. Возвращает True, если факт сохранён."""
     if not text.startswith("#"):
         return False
 
-    # Проверка: пишем только в разрешённом чате или админом
     chat_id = update.message.chat.id
     user_id = update.message.from_user.id
     username = update.message.from_user.username or ""
@@ -182,7 +310,6 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
     if chat_id != allowed_chat and not is_admin(user_id, username):
         return False
 
-    # Парсинг "#тег текст"
     match = re.match(r"^#([\w\-]+)\s+(.+)$", text, re.DOTALL)
     if not match:
         return False
@@ -190,7 +317,6 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
     tag = match.group(1).lower()
     fact_text = match.group(2).strip()
 
-    # Ищем год в скобках (2002) или в конце
     year = None
     ym = re.search(r"\((\d{4})\)", fact_text)
     if ym:
@@ -206,7 +332,7 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
 
 
 # =====================================================================
-# ОТВЕТ НА ВОПРОС
+# ОТВЕТ НА ВОПРОС (С WORLD BANK)
 # =====================================================================
 
 async def answer_question(update: Update, text: str) -> str:
@@ -214,34 +340,31 @@ async def answer_question(update: Update, text: str) -> str:
     user_id = update.message.from_user.id
     username = update.message.from_user.username or ""
 
-    # Антиспам
     if not db.check_cooldown(user_id, COOLDOWN_DIALOG):
         return None
 
-    # Сохраняем вопрос в историю
     db.add_history(chat_id, user_id, "user", text)
-
-    # Сжимаем историю, если накопилось
     await maybe_summarize_history(chat_id, user_id)
-
-    # Собираем контекст
     history = db.get_history(chat_id, user_id, limit=HISTORY_CONTEXT_LIMIT)
 
-    # Ищем релевантные факты
+    # 1. Пытаемся получить данные из World Bank
+    wb_context = await get_economic_context(text)
+
+    # 2. Ищем релевантные факты из базы
     all_tags = db.get_all_tags()
     relevant_facts = []
     text_lower = text.lower()
-
     for t in all_tags:
         if t["tag"] in text_lower:
-            facts = db.get_facts_by_tag(t["tag"])
-            relevant_facts.extend(facts)
+            relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
 
-    # Формируем system prompt
+    # 3. Формируем system prompt
     system_parts = [
         "Ты — аналитический РП-бот. Отвечай кратко, по делу, только на русском.",
-        "Используй ТОЛЬКО предоставленные факты. НЕ ВЫДУМЫВАЙ числа, даты и события.",
-        "Если фактов недостаточно — честно скажи об этом.",
+        "ПРИОРИТЕТ 1: Если есть ФАКТЫ ИЗ БАЗЫ — используй ТОЛЬКО их.",
+        "ПРИОРИТЕТ 2: Если есть ДАННЫЕ WORLD BANK — используй их для точных цифр.",
+        "ПРИОРИТЕТ 3: Если ничего нет — используй общие знания, но пометь '(общие данные)'.",
+        "Если совсем не знаешь — скажи 'нет данных'.",
     ]
 
     if relevant_facts:
@@ -250,22 +373,24 @@ async def answer_question(update: Update, text: str) -> str:
             for f in relevant_facts[:20]
         ])
         system_parts.append(f"\nФАКТЫ ИЗ БАЗЫ:\n{facts_str}")
-    else:
-        # Фактов нет — пробуем поиск в интернете
+
+    if wb_context:
+        system_parts.append(f"\n{wb_context}")
+
+    if not relevant_facts and not wb_context:
         search_result = await search_web(text)
         if search_result:
-            system_parts.append(f"\nРЕЗУЛЬТАТЫ ПОИСКА (используй осторожно, это не факты из базы):\n{search_result}")
+            system_parts.append(f"\nРЕЗУЛЬТАТЫ ПОИСКА (используй осторожно):\n{search_result}")
         else:
-            system_parts.append("\nВ базе нет фактов по этой теме, и поиск в интернете не дал результатов. Скажи, что данных нет.")
+            system_parts.append("\nВ базе нет фактов, и поиск не дал результатов. Скажи, что данных нет.")
 
     system_prompt = "\n".join(system_parts)
 
     messages = [{"role": "system", "content": system_prompt}]
-    for h in history[:-1]:  # последнее сообщение — текущий вопрос, добавим ниже
+    for h in history[:-1]:
         messages.append({"role": h["role"], "content": h["content"]})
     messages.append({"role": "user", "content": text})
 
-    # Пробуем Groq (с fallback), потом Gemini
     answer = await call_groq(GROQ_KEY_MAIN, MODEL_MAIN, messages, temperature=0.5)
     if not answer:
         answer = await call_gemini(messages, temperature=0.5)
@@ -293,7 +418,6 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⏳ Подожди {int(COOLDOWN_VERDICT)} сек перед новым вердиктом.")
         return
 
-    # Текст: из reply или из команды
     raw = update.message.text or ""
     text = raw.replace("/verdict", "").strip()
 
@@ -308,7 +432,6 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Извлекаем год (в конце текста)
     year = None
     ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", text)
     if ym:
@@ -317,13 +440,15 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("⏳ Анализирую ситуацию и готовлю вердикт...")
 
-    # Собираем ВСЕ релевантные факты (все теги, что упомянуты в тексте)
+    # Собираем факты и данные World Bank
     all_tags = db.get_all_tags()
     relevant_facts = []
     text_lower = text.lower()
     for t in all_tags:
         if t["tag"] in text_lower:
             relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
+
+    wb_context = await get_economic_context(text + (f" {year}" if year else ""))
 
     facts_str = "\n".join([
         f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f.get("year") else "")
@@ -337,13 +462,15 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "**⚠️ РИСКИ:**\n• [риск 1]\n• [риск 2]\n• [риск 3]\n"
         "**💡 ПРЕДЛОЖЕНИЯ:**\n• [предложение 1]\n• [предложение 2]\n• [предложение 3]\n\n"
         "ПРАВИЛА:\n"
-        "1. Используй ТОЛЬКО предоставленные факты и текст ситуации.\n"
-        "2. НЕ ВЫДУМЫВАЙ числа (ВВП, армия, бюджеты) — если их нет в фактах, не пиши.\n"
-        "3. Учитывай современную геополитическую обстановку 2026 года (многополярный мир, санкции, СВО и т.д.).\n"
-        "4. Если в тексте есть УЛЬТИМАТУМ (требования, сроки, угрозы) — добавь раздел "
-        "**🎯 ОТВЕТ АДРЕСАТА:** [как вероятно ответит другая сторона, 2-3 предложения].\n\n"
+        "1. Используй ТОЛЬКО предоставленные факты и данные.\n"
+        "2. НЕ ВЫДУМЫВАЙ числа.\n"
+        "3. Учитывай современную геополитическую обстановку 2026 года.\n"
+        "4. Если есть УЛЬТИМАТУМ — добавь раздел **🎯 ОТВЕТ АДРЕСАТА:**.\n\n"
         f"ФАКТЫ ИЗ БАЗЫ:\n{facts_str}"
     )
+
+    if wb_context:
+        system_prompt += f"\n\n{wb_context}"
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -357,14 +484,12 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Не удалось получить вердикт. Попробуй позже.")
         return
 
-    # Определяем тег для сохранения: первый упомянутый тег, иначе "вердикт"
     save_tag = "вердикт"
     for t in all_tags:
         if t["tag"] in text_lower:
             save_tag = t["tag"]
             break
 
-    # Сохраняем вердикт как факт
     fact_text = f"[ВЕРДИКТ] {text[:300]} → {verdict[:400]}"
     db.add_fact(save_tag, fact_text, user_id, username, year, is_verdict=True)
 
@@ -385,31 +510,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     username = update.message.from_user.username or ""
 
-    # === СБОР ФАКТОВ (#тег текст) ===
     if text.startswith("#"):
         saved = await save_fact_from_message(update, text)
-        if saved:
-            # Тихо подтверждаем только в личке, в чате молчим
-            if update.message.chat.type == "private":
-                await update.message.reply_text("✅ Запомнил.")
+        if saved and update.message.chat.type == "private":
+            await update.message.reply_text("✅ Запомнил.")
         return
 
-    # === ГДЕ ОТВЕЧАТЬ ===
-    # В личке админа — отвечаем всегда
-    # В чате фактов — отвечаем всегда
-    # В остальных группах — только если упомянули "свит" или бота
     facts_chat_id = get_facts_chat_id()
     is_private = update.message.chat.type == "private"
     is_facts_chat = (chat_id == facts_chat_id)
-    is_mentioned = (
-        re.search(r"\b(свит|бот)\b", text, re.IGNORECASE)
-        or (context.bot.username and context.bot.username.lower() in text.lower())
+    is_reply_to_bot = (
+        update.message.reply_to_message
+        and update.message.reply_to_message.from_user
+        and update.message.reply_to_message.from_user.id == context.bot.id
+    )
+    is_mention = (
+        context.bot.username
+        and f"@{context.bot.username.lower()}" in text.lower()
     )
 
-    if not (is_private or is_facts_chat or is_mentioned):
+    if not (is_private or is_facts_chat or is_reply_to_bot or is_mention):
         return
 
-    # === ОТВЕТ НА ВОПРОС ===
     answer = await answer_question(update, text)
     if answer:
         await update.message.reply_text(answer)
