@@ -1,10 +1,6 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА (С ДЕТАЛЬНЫМИ ВЕРДИКТАМИ)
+HANDLERS.PY — ЛОГИКА РП-БОТА (С РАЗБИВКОЙ ДЛИННЫХ СООБЩЕНИЙ)
 =====================================
-- Сбор фактов через #тег
-- Вопросы с памятью, поиском и данными World Bank
-- Максимально детальные вердикты через gpt-oss-120b
-- Fallback по 3 ключам Groq + Gemini
 """
 
 import re
@@ -23,6 +19,45 @@ from config import (
     HISTORY_CONTEXT_LIMIT, HISTORY_SUMMARIZE_THRESHOLD, HISTORY_SUMMARIZE_BATCH,
 )
 import database as db
+
+# =====================================================================
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ РАЗБИВКИ ТЕКСТА
+# =====================================================================
+
+def split_text(text: str, max_length: int = 4000) -> list[str]:
+    """Разбивает длинный текст на части, не превышающие max_length."""
+    if len(text) <= max_length:
+        return [text]
+
+    parts = []
+    # Сначала пытаемся резать по абзацам (двойной перенос)
+    paragraphs = text.split("\n\n")
+    current_part = ""
+
+    for p in paragraphs:
+        # Если один абзац сам по себе больше лимита, режем по строкам
+        if len(p) > max_length:
+            lines = p.split("\n")
+            for line in lines:
+                if len(current_part) + len(line) + 1 <= max_length:
+                    current_part += line + "\n"
+                else:
+                    if current_part:
+                        parts.append(current_part.strip())
+                    current_part = line + "\n"
+        else:
+            if len(current_part) + len(p) + 2 <= max_length:
+                current_part += p + "\n\n"
+            else:
+                if current_part:
+                    parts.append(current_part.strip())
+                current_part = p + "\n\n"
+
+    if current_part:
+        parts.append(current_part.strip())
+
+    return parts
+
 
 # =====================================================================
 # КОНСТАНТЫ WORLD BANK
@@ -312,14 +347,12 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Используй: `/verdict текст ситуации [год]`", parse_mode="Markdown")
         return
 
-    # Ищем год только в конце текста
     year = None
     ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", text)
     if ym:
         year = int(ym.group(1))
         text = text[:ym.start()].strip()
     
-    # Формируем отображение года для промпта (если год есть)
     year_display = f" ({year})" if year else ""
     year_context = f"ГОД: {year}\n" if year else ""
 
@@ -335,7 +368,6 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     facts_str = "\n".join([f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f.get("year") else "") for f in relevant_facts[:30]]) if relevant_facts else "Нет сохранённых фактов."
 
-    # ДЕТАЛЬНЫЙ ПРОМПТ
     system_prompt = (
         f"Ты — строгий и реалистичный Гейм-Мастер геополитической РП-игры.\n"
         f"{year_context}\n"
@@ -395,12 +427,13 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fact_text = f"[ВЕРДИКТ] {text[:300]} → {verdict[:400]}"
     db.add_fact(save_tag, fact_text, user_id, username, year, is_verdict=True)
 
-    # Отправляем результат. Если текст слишком длинный, Telegram сам разобьет или вернет ошибку.
-    try:
-        await update.message.reply_text(verdict, parse_mode="Markdown")
-    except Exception:
-        # Если Markdown ломается из-за спецсимволов, отправляем чистым текстом
-        await update.message.reply_text(verdict)
+    # === ИСПОЛЬЗУЕМ НАШУ ФУНКЦИЮ РАЗБИВКИ ===
+    parts = split_text(verdict, max_length=4000)
+    for part in parts:
+        try:
+            await update.message.reply_text(part, parse_mode="Markdown")
+        except Exception:
+            await update.message.reply_text(part)
 
 
 # =====================================================================
@@ -429,4 +462,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     answer = await answer_question(update, text)
     if answer:
-        await update.message.reply_text(answer)
+        # === ТАКЖЕ РАЗБИВАЕМ И ОБЫЧНЫЕ ОТВЕТЫ ===
+        for part in split_text(answer, max_length=4000):
+            try:
+                await update.message.reply_text(part, parse_mode="Markdown")
+            except Exception:
+                await update.message.reply_text(part)
