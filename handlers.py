@@ -1,9 +1,9 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛЬНАЯ ВЕРСИЯ)
+HANDLERS.PY — ЛОГИКА РП-БОТА (БЕЗ ХАРДКОДНЫХ NRP-ПРОВЕРОК)
 =====================================
 - Сбор фактов через #тег
 - Вопросы с памятью, поиском и данными World Bank
-- Детальные вердикты с проверкой на NRP (с учетом реальной истории)
+- Детальные вердикты с LLM-проверкой на NRP (без хардкода)
 - Fallback по 3 ключам Groq + Gemini
 """
 
@@ -23,50 +23,6 @@ from config import (
     HISTORY_CONTEXT_LIMIT, HISTORY_SUMMARIZE_THRESHOLD, HISTORY_SUMMARIZE_BATCH,
 )
 import database as db
-
-# =====================================================================
-# ДЕТЕКТОР NRP (ЛОВИТ ТОЛЬКО ФИЗИЧЕСКИЙ БРЕД)
-# =====================================================================
-
-# Маркеры явного бреда (мгновенное строительство, магия)
-NRP_MARKERS = [
-    "мгновенно построил", "за день построил", "за час построил",
-    "неограниченн", "бесконечн", "одним ударом уничтожил всё",
-    "нажал кнопку и", "магически", "телепортировал", "мановением руки",
-    "за минуту построил", "за секунду построил",
-]
-
-# Технологии, которых точно не было в 2010-х (проверяется только если указан год)
-FUTURE_TECH = [
-    "лазерное оружие", "плазменное оружие", "рельсотрон",
-    "телепортация", "нейроинтерфейс", "нанороботы",
-    "антигравитация", "варп-двигатель", "телепорт", "силовое поле",
-    "искусственный интеллект 4-го поколения", "квантовый компьютер",
-    "гиперзвуковое оружие", "гиперпетля", "hyperloop",
-]
-
-
-def detect_nrp(text: str, year: int = None) -> str | None:
-    """
-    Ловит только явный маразм (мгновенное строительство, магия).
-    Все числовые проверки (танки, солдаты) делает LLM на основе фактов из базы и реальной истории.
-    """
-    text_lower = text.lower()
-
-    # 1. Маркеры бреда (всегда проверяем)
-    for marker in NRP_MARKERS:
-        if marker in text_lower:
-            return f"🚨 **NRP**: Фраза «{marker}» — это метагейминг. В РП действия требуют времени и ресурсов."
-
-    # 2. Технологии из будущего (ТОЛЬКО если год известен)
-    if year:
-        for tech in FUTURE_TECH:
-            if tech in text_lower:
-                if year < 2020:
-                    return f"🚨 **NRP**: Технология «{tech}» не существует в {year} году."
-
-    return None
-
 
 # =====================================================================
 # ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ РАЗБИВКИ ТЕКСТА
@@ -317,13 +273,6 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
         ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", fact_text)
         if ym: year = int(ym.group(1))
 
-    # Проверка на NRP при сохранении факта (только физический бред)
-    nrp = detect_nrp(fact_text, year)
-    if nrp:
-        if update.message.chat.type == "private":
-            await update.message.reply_text(f"❌ Факт НЕ сохранён.\n\n{nrp}")
-        return False
-
     db.add_fact(tag, fact_text, user_id, username, year)
     db.add_history(chat_id, user_id, "user", text)
     return True
@@ -353,11 +302,9 @@ async def answer_question(update: Update, text: str) -> str:
         "ПРИОРИТЕТ 2: Если в базе нет факта, но он есть в РЕАЛЬНОЙ ИСТОРИИ (общеизвестен) — используй его.",
         "ПРИОРИТЕТ 3: Если есть ДАННЫЕ WORLD BANK — используй их для точных цифр.",
         "ПРИОРИТЕТ 4: Если ничего нет — используй общие знания, но пометь '(общие данные)'.",
-        "Если пользователь пишет что-то нереалистичное (огромные армии, технологии будущего) — вежливо укажи на NRP.",
     ]
 
     if relevant_facts:
-        # ИСПОЛЬЗУЕМ f['year'] ВМЕСТО .get()
         facts_str = "\n".join([f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "") for f in relevant_facts[:20]])
         system_parts.append(f"\nФАКТЫ ИЗ БАЗЫ:\n{facts_str}")
     if wb_context: system_parts.append(f"\n{wb_context}")
@@ -378,7 +325,7 @@ async def answer_question(update: Update, text: str) -> str:
     return answer
 
 # =====================================================================
-# ДЕТАЛЬНЫЙ ВЕРДИКТ (/verdict)
+# ДЕТАЛЬНЫЙ ВЕРДИКТ (/verdict) — БЕЗ ХАРДКОДНЫХ NRP-ПРОВЕРОК
 # =====================================================================
 
 async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -408,19 +355,6 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     year_display = f" ({year})" if year else ""
     year_context = f"ГОД: {year}\n" if year else ""
 
-    # === ПРОВЕРКА НА NRP (ТОЛЬКО ФИЗИЧЕСКИЙ БРЕД) ===
-    nrp_reason = detect_nrp(text, year)
-    if nrp_reason:
-        await update.message.reply_text(
-            f"🚫 **ВЕРДИКТ ОТКЛОНЁН**\n\n"
-            f"{nrp_reason}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"💡 *Исправь ситуацию и попробуй снова. NRP нарушает правила РП.*",
-            parse_mode="Markdown"
-        )
-        return
-    # ================================================
-
     await update.message.reply_text("⏳ Готовлю детальный вердикт...")
 
     all_tags = db.get_all_tags()
@@ -431,7 +365,6 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     wb_context = await get_economic_context(text)
 
-    # ИСПОЛЬЗУЕМ f['year'] ВМЕСТО .get()
     facts_str = "\n".join([f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "") for f in relevant_facts[:30]]) if relevant_facts else "Нет сохранённых фактов."
 
     system_prompt = (
@@ -482,7 +415,7 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ПРАВИЛА:\n"
         "1. Используй ТОЛЬКО предоставленные факты и текст ситуации.\n"
         "2. НЕ ВЫДУМЫВАЙ числа.\n"
-        "3. Будь строг. Если что-то не подкреплено фактами и реальной историей — это NRP.\n\n"
+        "3. Будь справедлив. NRP — это только физически невозможное (телепортация, 500 млн танков, магия). Всё остальное — реалистично, если есть факты или исторические предпосылки.\n\n"
         "═══════════════════════════════════════════\n"
         f"📚 ФАКТЫ ИЗ БАЗЫ (история страны в РП):\n{facts_str}"
     )
@@ -547,3 +480,4 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(part, parse_mode="Markdown")
             except Exception:
                 await update.message.reply_text(part)
+        
