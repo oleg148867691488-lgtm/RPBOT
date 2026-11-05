@@ -1,1 +1,7 @@
-
+*.db
+*.pyc
+__pycache__/
+.venv/
+.env
+facts.db
+saved_chats.json
