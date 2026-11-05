@@ -17,12 +17,13 @@ GROQ_KEY_MAIN    = os.getenv("GROQ_KEY_1")   # основной диалог
 GROQ_KEY_VERDICT = os.getenv("GROQ_KEY_2")   # вердикты
 GROQ_KEY_SUMMARY = os.getenv("GROQ_KEY_3")   # суммаризация истории
 
+# Список всех ключей для fallback-перебора (если основной упал)
 GROQ_ALL_KEYS = [k for k in [GROQ_KEY_MAIN, GROQ_KEY_VERDICT, GROQ_KEY_SUMMARY] if k]
 
 # === МОДЕЛИ ===
-MODEL_MAIN    = "openai/gpt-oss-120b"
-MODEL_VERDICT = "deepseek-r1-distill-llama-70b"
-MODEL_SUMMARY = "llama-3.1-8b-instant"
+MODEL_MAIN    = "qwen/qwen3.8-27b"          # быстрая и умная для диалога
+MODEL_VERDICT = "openai/gpt-oss-120b"       # мощная для глубокого анализа
+MODEL_SUMMARY = "openai/gpt-oss-20b"        # самая быстрая для сжатия
 
 # === GEMINI (опционально, как крайний fallback) ===
 GEMINI_KEY = os.getenv("GEMINI_KEY")
@@ -40,8 +41,8 @@ TURSO_DATABASE_URL = os.getenv("TURSO_URL")
 TURSO_AUTH_TOKEN   = os.getenv("TURSO_KEY")
 
 # === НАСТРОЙКИ ПОВЕДЕНИЯ ===
-COOLDOWN_DIALOG    = 3.0
-COOLDOWN_VERDICT   = 15.0
-HISTORY_CONTEXT_LIMIT        = 15
-HISTORY_SUMMARIZE_THRESHOLD  = 30
-HISTORY_SUMMARIZE_BATCH      = 20
+COOLDOWN_DIALOG    = 3.0    # сек между обычными сообщениями
+COOLDOWN_VERDICT   = 15.0   # сек между вердиктами
+HISTORY_CONTEXT_LIMIT        = 15   # сколько последних сообщений идёт в промпт
+HISTORY_SUMMARIZE_THRESHOLD  = 30   # при скольких сообщениях запускать сжатие
+HISTORY_SUMMARIZE_BATCH      = 20   # сколько старых сообщений сжимать за раз
