@@ -93,13 +93,16 @@ def text_help():
         "`/verdict Ввести санкции против США 2008`\n"
         "или ответь на сообщение командой `/verdict 2008`\n"
         "→ Бот выдаст: оценку, риски, предложения.\n"
-        "→ Доступно всем, но с лимитом (5 в день для игроков).\n\n"
+        "→ Доступно всем, но с лимитом (5 в день для игроков, 100 для админа).\n"
+        "→ Кулдаун: 60 сек для игроков, 15 сек для админа.\n\n"
         "🔹 **Сохранение чата:**\n"
         "`/savechat` — сделать этот чат хранилищем фактов.\n\n"
         "🔹 **Время РП:**\n"
         "`/year 2010` — установить стартовый год РП.\n"
-        "→ Дальше время идёт автоматически: 1 реальный час ≈ 15 дней РП.\n"
-        "`/year` — показать текущую дату в РП.\n\n"
+        "→ Смена дня РП: в 00:00 МСК.\n"
+        "→ Скорость: 1 реальный день = ~15.2 дня РП.\n"
+        "→ Год меняется автоматически через 24 реальных дня.\n"
+        "`/year` — показать текущую дату в РП и счётчик до смены года.\n\n"
         "──────────────────────────────\n"
         "💡 _Совет: указывай год в (скобках) — бот поймёт._"
     )
@@ -187,8 +190,10 @@ def text_year():
             f"📅 Год: {rp['year']}\n\n"
             f"🕐 Реальное МСК: {rp['real_msk']}\n"
             f"⏱ Прошло (реал): {rp['elapsed_hours']:.2f} ч.\n"
-            f"📊 Дней РП прошло: {rp['rp_days']:.1f}\n\n"
-            "⚡ Скорость: 1 реальный час ≈ 15 дней РП.\n\n"
+            f"📊 Дней РП прошло: {rp['rp_days']:.1f}\n"
+            f"🎯 До смены года: {rp['days_to_new_year']:.1f} дней РП\n\n"
+            "⚡ Скорость: 1 реальный день = ~15.2 дня РП.\n"
+            "🕛 Смена дня РП: в 00:00 МСК.\n\n"
             "Сменить стартовый год: `/year 2010`"
         )
     else:
@@ -282,7 +287,8 @@ async def year_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"📅 **Год РП установлен на {year}.**\n\n"
         f"🕐 Старт: сейчас (МСК).\n"
-        f"⚡ Скорость: 1 реальный час ≈ 15 дней РП.\n\n"
+        f"⚡ Скорость: 1 реальный день = ~15.2 дня РП.\n"
+        f"🕛 Смена дня РП: в 00:00 МСК.\n\n"
         f"Дата будет меняться автоматически.\n"
         f"Проверить текущую дату: `/year`",
         parse_mode="Markdown"
@@ -311,7 +317,7 @@ async def clear_facts_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()  # Обязательно: убирает "крутилку" на кнопке
+    await query.answer()
     
     user_id = query.from_user.id
     username = query.from_user.username or ""
@@ -373,4 +379,4 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🗑 *База фактов полностью очищена.*",
             reply_markup=back_keyboard(),
             parse_mode="Markdown"
-        )
+    )
