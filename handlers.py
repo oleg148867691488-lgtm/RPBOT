@@ -1,26 +1,18 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА С СИМУЛЯЦИЕЙ ВРЕМЕНИ (МСК)
+HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ)
 =====================================
-- Симуляция времени РП: 1 реальный час = ~15 дней РП (365 дней за 24 часа)
-- Сбор фактов через #тег
-- Вопросы с памятью, поиском и данными World Bank
-- Вердикты с LLM-проверкой на NRP (без хардкода)
-- Fallback по 3 ключам Groq + Gemini
+- Бот отвечает ТОЛЬКО по @упоминанию или реплаю (в группах)
+- В личке отвечает на всё
+- Симуляция времени РП по UTC-эпохе (без pytz)
 """
 
 import re
+import time
 import httpx
 import asyncio
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes
-
-try:
-    import pytz
-    MSK = pytz.timezone("Europe/Moscow")
-except ImportError:
-    from datetime import timezone
-    MSK = timezone(timedelta(hours=3))
 
 from config import (
     ADMIN_ID, ADMIN_USERNAME, FACTS_CHAT_ID,
@@ -34,33 +26,43 @@ from config import (
 import database as db
 
 # =====================================================================
-# СИМУЛЯЦИЯ ВРЕМЕНИ РП (МСК)
+# СИМУЛЯЦИЯ ВРЕМЕНИ РП (ЧИСТАЯ МАТЕМАТИКА, БЕЗ pytz)
 # =====================================================================
 
 def get_rp_datetime() -> dict:
     """
-    Вычисляет текущую дату РП по реальному времени МСК.
-    Скорость: 365 дней РП проходят за 24 реальных часа.
-    1 реальная секунда = 365/86400 ≈ 0.00422 дня РП.
+    Вычисляет текущую дату РП.
+    Использует только time.time() (UTC-эпоха), без часовых поясов.
+    1 реальный час = ~15.2 RP дня (365 RP дней за 24 реальных часа).
     """
     saved_year = db.get_setting("rp_year")
     saved_start = db.get_setting("rp_start_time")
 
     if not saved_year or not saved_start:
-        return {"year": None, "month": None, "day": None, "hour": None, "full": None}
+        return {"year": None, "month": None, "day": None, "hour": None,
+                "full": None, "elapsed_hours": 0, "rp_days": 0, "real_msk": None}
 
     try:
         base_year = int(saved_year)
         start_ts = float(saved_start)
     except (ValueError, TypeError):
-        return {"year": None, "month": None, "day": None, "hour": None, "full": None}
+        return {"year": None, "month": None, "day": None, "hour": None,
+                "full": None, "elapsed_hours": 0, "rp_days": 0, "real_msk": None}
 
-    now = datetime.now(MSK).timestamp()
-    elapsed_real_seconds = now - start_ts
+    now_ts = time.time()
+    elapsed_real_seconds = max(0, now_ts - start_ts)
     rp_days_passed = elapsed_real_seconds * (365 / 86400)
 
-    start_date = datetime(base_year, 1, 1, tzinfo=MSK)
+    start_date = datetime(base_year, 1, 1)
     rp_date = start_date + timedelta(days=rp_days_passed)
+
+    # Debug: реальное время МСК
+    try:
+        import pytz
+        real_msk = datetime.now(pytz.timezone("Europe/Moscow")).strftime("%d.%m.%Y %H:%M:%S")
+    except ImportError:
+        from datetime import timezone
+        real_msk = datetime.now(timezone(timedelta(hours=3))).strftime("%d.%m.%Y %H:%M:%S")
 
     return {
         "year": rp_date.year,
@@ -68,11 +70,14 @@ def get_rp_datetime() -> dict:
         "day": rp_date.day,
         "hour": rp_date.hour,
         "full": rp_date.strftime("%d.%m.%Y %H:%M"),
+        "elapsed_hours": elapsed_real_seconds / 3600,
+        "rp_days": rp_days_passed,
+        "real_msk": real_msk,
     }
 
 
 # =====================================================================
-# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ РАЗБИВКИ ТЕКСТА
+# РАЗБИВКА ДЛИННЫХ СООБЩЕНИЙ
 # =====================================================================
 
 def split_text(text: str, max_length: int = 4000) -> list[str]:
@@ -104,7 +109,7 @@ def split_text(text: str, max_length: int = 4000) -> list[str]:
 
 
 # =====================================================================
-# КОНСТАНТЫ WORLD BANK
+# WORLD BANK
 # =====================================================================
 
 WB_BASE_URL = "https://api.worldbank.org/v2"
@@ -139,10 +144,6 @@ INDICATOR_CODES = {
 }
 
 
-# =====================================================================
-# УТИЛИТЫ
-# =====================================================================
-
 def is_admin(user_id: int, username: str) -> bool:
     if user_id == ADMIN_ID:
         return True
@@ -161,10 +162,6 @@ def get_facts_chat_id() -> int:
     return FACTS_CHAT_ID
 
 
-# =====================================================================
-# WORLD BANK
-# =====================================================================
-
 async def fetch_world_bank_data(country_code: str, indicator_code: str, year: int = None) -> str | None:
     url = f"{WB_BASE_URL}/country/{country_code}/indicator/{indicator_code}"
     params = {"format": "json", "per_page": 100}
@@ -172,7 +169,6 @@ async def fetch_world_bank_data(country_code: str, indicator_code: str, year: in
         params["date"] = str(year)
     else:
         params["MRV"] = 1
-
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.get(url, params=params)
@@ -192,12 +188,10 @@ async def fetch_world_bank_data(country_code: str, indicator_code: str, year: in
             date = record["date"]
             indicator_name = record["indicator"]["value"]
             country_name = record["country"]["value"]
-
             if indicator_code in ["FP.CPI.TOTL.ZG", "SL.UEM.TOTL.ZS"]:
                 formatted_value = f"{value:.1f}%"
             else:
                 formatted_value = f"{value:,.0f}".replace(",", " ")
-
             return f"{indicator_name} для {country_name} ({date}): {formatted_value}"
     except Exception as e:
         print(f"⚠️ World Bank ошибка: {str(e)[:80]}")
@@ -213,7 +207,6 @@ async def get_economic_context(text: str) -> str | None:
             break
     if not found_country_code:
         return None
-
     found_indicator_code = None
     for indicator_name, code in INDICATOR_CODES.items():
         if indicator_name in text_lower:
@@ -221,26 +214,19 @@ async def get_economic_context(text: str) -> str | None:
             break
     if not found_indicator_code:
         return None
-
     year = None
     year_match = re.search(r"\b(19\d{2}|20\d{2})\b", text)
     if year_match:
         year = int(year_match.group(1))
-
     result = await fetch_world_bank_data(found_country_code, found_indicator_code, year)
     if result:
         return f"[ДАННЫЕ WORLD BANK]: {result}"
     return None
 
 
-# =====================================================================
-# GROQ / GEMINI / OLLAMA
-# =====================================================================
-
 async def call_groq(primary_key: str, model: str, messages: list, temperature: float = 0.3) -> str | None:
     keys_to_try = [primary_key] + [k for k in GROQ_ALL_KEYS if k != primary_key]
     keys_to_try = [k for k in keys_to_try if k]
-
     for i, key in enumerate(keys_to_try):
         try:
             data = {"model": model, "temperature": temperature, "messages": messages}
@@ -266,11 +252,9 @@ async def call_gemini(messages: list, temperature: float = 0.3) -> str | None:
         else:
             contents.append({"role": "user" if msg["role"] == "user" else "model",
                              "parts": [{"text": msg["content"]}]})
-
     payload = {"contents": contents, "generationConfig": {"temperature": temperature}}
     if system_prompt:
         payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
-
     try:
         url = GEMINI_URL_TEMPLATE.format(key=GEMINI_KEY)
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -296,18 +280,11 @@ async def search_web(query: str) -> str | None:
             results = resp.json().get("results", [])
             if not results:
                 return None
-            return "\n".join([
-                f"• {r.get('title', 'Без названия')}: {r.get('content', '')[:300]}"
-                for r in results[:3]
-            ])
+            return "\n".join([f"• {r.get('title', 'Без названия')}: {r.get('content', '')[:300]}" for r in results[:3]])
     except Exception as e:
         print(f"⚠️ Ollama ошибка: {str(e)[:80]}")
         return None
 
-
-# =====================================================================
-# ИСТОРИЯ
-# =====================================================================
 
 async def maybe_summarize_history(chat_id: int, user_id: int):
     count = db.count_active_history(chat_id, user_id)
@@ -328,10 +305,6 @@ async def maybe_summarize_history(chat_id: int, user_id: int):
     db.archive_messages([m["id"] for m in old_msgs])
     db.add_history(chat_id, user_id, "system", f"[СЖАТАЯ ИСТОРИЯ] {summary}", is_summary=True)
 
-
-# =====================================================================
-# СБОР ФАКТОВ
-# =====================================================================
 
 async def save_fact_from_message(update: Update, text: str) -> bool:
     if not text.startswith("#"):
@@ -355,15 +328,10 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
         ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", fact_text)
         if ym:
             year = int(ym.group(1))
-
     db.add_fact(tag, fact_text, user_id, username, year)
     db.add_history(chat_id, user_id, "user", text)
     return True
 
-
-# =====================================================================
-# ОТВЕТ НА ВОПРОС (с датой РП)
-# =====================================================================
 
 async def answer_question(update: Update, text: str) -> str:
     chat_id = update.message.chat.id
@@ -382,10 +350,9 @@ async def answer_question(update: Update, text: str) -> str:
         if t["tag"] in text_lower:
             relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
 
-    # Дата РП
     rp = get_rp_datetime()
     if rp["year"]:
-        date_line = f"Сейчас в РП: {rp['day']} числа, {rp['month']} месяца, {rp['hour']}:00, {rp['year']} год (МСК). "
+        date_line = f"Сейчас в РП: {rp['day']} числа, {rp['month']} месяца, {rp['hour']}:00, {rp['year']} год. "
     else:
         date_line = ""
 
@@ -394,22 +361,16 @@ async def answer_question(update: Update, text: str) -> str:
         "ПРИОРИТЕТ 1: Если есть ФАКТЫ ИЗ БАЗЫ — используй их.",
         "ПРИОРИТЕТ 2: Если в базе нет факта, но он есть в РЕАЛЬНОЙ ИСТОРИИ до 2020 года — используй его.",
         "ПРИОРИТЕТ 3: Если есть ДАННЫЕ WORLD BANK — используй их для точных цифр.",
-        "🚨 КРИТИЧЕСКОЕ ПРАВИЛО: НЕ используй свои знания о событиях 2024–2026 годов. Ты живёшь в РП. Если фактов в базе нет и в реальной истории до 2020 их тоже нет — скажи 'В базе знаний нет данных по этой теме. Добавь факты через #тег'.",
+        "🚨 КРИТИЧЕСКОЕ ПРАВИЛО: НЕ используй знания о событиях 2024–2026 годов. Если фактов в базе нет и в реальной истории до 2020 их тоже нет — скажи 'В базе знаний нет данных по этой теме. Добавь факты через #тег'.",
     ]
 
     if relevant_facts:
-        facts_str = "\n".join([
-            f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "")
-            for f in relevant_facts[:20]
-        ])
+        facts_str = "\n".join([f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "") for f in relevant_facts[:20]])
         system_parts.append(f"\nФАКТЫ ИЗ БАЗЫ:\n{facts_str}")
     if wb_context:
         system_parts.append(f"\n{wb_context}")
     if not relevant_facts and not wb_context:
-        system_parts.append(
-            "\nВ базе нет фактов по этой теме. НЕ используй знания о 2024–2026 годах. "
-            "Скажи: 'В базе знаний нет данных. Добавь факты через #тег'."
-        )
+        system_parts.append("\nВ базе нет фактов. НЕ используй знания о 2024–2026. Скажи: 'В базе знаний нет данных. Добавь факты через #тег'.")
 
     system_prompt = "\n".join(system_parts)
     messages = [{"role": "system", "content": system_prompt}]
@@ -424,11 +385,6 @@ async def answer_question(update: Update, text: str) -> str:
         return "❌ Все модели недоступны. Попробуй позже."
     db.add_history(chat_id, user_id, "assistant", answer)
     return answer
-
-
-# =====================================================================
-# ДЕТАЛЬНЫЙ ВЕРДИКТ (/verdict) С ДАТОЙ РП
-# =====================================================================
 
 async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -448,14 +404,12 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Используй: `/verdict текст ситуации [год]`", parse_mode="Markdown")
         return
 
-    # Дата РП
     rp = get_rp_datetime()
     rp_year = rp["year"]
     rp_month = rp["month"]
     rp_day = rp["day"]
     rp_hour = rp["hour"]
 
-    # Если год указан в тексте — переопределяем
     year = None
     ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", text)
     if ym:
@@ -465,7 +419,7 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         year = rp_year
 
     if year and rp_month and rp_day:
-        date_context = f"Сейчас в РП: {rp_day} числа, {rp_month} месяца, {rp_hour}:00, {year} год (МСК).\n"
+        date_context = f"Сейчас в РП: {rp_day} числа, {rp_month} месяца, {rp_hour}:00, {year} год.\n"
     elif year:
         date_context = f"Сейчас в РП: {year} год.\n"
     else:
@@ -484,10 +438,7 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     wb_context = await get_economic_context(text)
 
-    facts_str = "\n".join([
-        f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "")
-        for f in relevant_facts[:30]
-    ]) if relevant_facts else "Нет сохранённых фактов."
+    facts_str = "\n".join([f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "") for f in relevant_facts[:30]]) if relevant_facts else "Нет сохранённых фактов."
 
     system_prompt = (
         f"Ты — строгий Гейм-Мастер геополитической РП-игры.\n"
@@ -537,9 +488,9 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ПРАВИЛА:\n"
         "1. Используй ТОЛЬКО предоставленные факты и текст ситуации.\n"
         "2. НЕ ВЫДУМЫВАЙ числа.\n"
-        "3. Будь справедлив. NRP — это только физически невозможное. Всё остальное — реалистично, если есть факты или исторические предпосылки.\n\n"
+        "3. Будь справедлив. NRP — только физически невозможное. Всё остальное — реалистично, если есть факты или исторические предпосылки.\n\n"
         "═══════════════════════════════════════════\n"
-        f"📚 ФАКТЫ ИЗ БАЗЫ (история страны в РП):\n{facts_str}"
+        f"📚 ФАКТЫ ИЗ БАЗЫ:\n{facts_str}"
     )
     if wb_context:
         system_prompt += f"\n\n{wb_context}"
@@ -573,10 +524,6 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(part)
 
 
-# =====================================================================
-# ОСНОВНОЙ ОБРАБОТЧИК
-# =====================================================================
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -589,9 +536,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ Запомнил.")
         return
 
-    facts_chat_id = get_facts_chat_id()
     is_private = update.message.chat.type == "private"
-    is_facts_chat = (chat_id == facts_chat_id)
     is_reply_to_bot = (
         update.message.reply_to_message
         and update.message.reply_to_message.from_user
@@ -599,7 +544,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     is_mention = (context.bot.username and f"@{context.bot.username.lower()}" in text.lower())
 
-    if not (is_private or is_facts_chat or is_reply_to_bot or is_mention):
+    # В ЛИЧКЕ — отвечаем всегда. В ГРУППАХ — только по упоминанию или реплаю.
+    if not (is_private or is_reply_to_bot or is_mention):
         return
 
     answer = await answer_question(update, text)
