@@ -1,9 +1,9 @@
 """
 HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ)
 =====================================
-- Бот отвечает ТОЛЬКО по @упоминанию или реплаю (в группах)
-- В личке отвечает на всё
-- Симуляция времени РП по UTC-эпохе (без pytz)
+- Бот в группах отвечает ТОЛЬКО по @упоминанию или реплаю
+- В личке — на всё
+- Симуляция времени РП по UTC-эпохе
 """
 
 import re
@@ -25,29 +25,26 @@ from config import (
 )
 import database as db
 
+
 # =====================================================================
-# СИМУЛЯЦИЯ ВРЕМЕНИ РП (ЧИСТАЯ МАТЕМАТИКА, БЕЗ pytz)
+# СИМУЛЯЦИЯ ВРЕМЕНИ РП
 # =====================================================================
 
 def get_rp_datetime() -> dict:
-    """
-    Вычисляет текущую дату РП.
-    Использует только time.time() (UTC-эпоха), без часовых поясов.
-    1 реальный час = ~15.2 RP дня (365 RP дней за 24 реальных часа).
-    """
     saved_year = db.get_setting("rp_year")
     saved_start = db.get_setting("rp_start_time")
 
+    empty = {"year": None, "month": None, "day": None, "hour": None,
+             "full": None, "elapsed_hours": 0, "rp_days": 0, "real_msk": None}
+
     if not saved_year or not saved_start:
-        return {"year": None, "month": None, "day": None, "hour": None,
-                "full": None, "elapsed_hours": 0, "rp_days": 0, "real_msk": None}
+        return empty
 
     try:
         base_year = int(saved_year)
         start_ts = float(saved_start)
     except (ValueError, TypeError):
-        return {"year": None, "month": None, "day": None, "hour": None,
-                "full": None, "elapsed_hours": 0, "rp_days": 0, "real_msk": None}
+        return empty
 
     now_ts = time.time()
     elapsed_real_seconds = max(0, now_ts - start_ts)
@@ -56,7 +53,6 @@ def get_rp_datetime() -> dict:
     start_date = datetime(base_year, 1, 1)
     rp_date = start_date + timedelta(days=rp_days_passed)
 
-    # Debug: реальное время МСК
     try:
         import pytz
         real_msk = datetime.now(pytz.timezone("Europe/Moscow")).strftime("%d.%m.%Y %H:%M:%S")
@@ -386,6 +382,7 @@ async def answer_question(update: Update, text: str) -> str:
     db.add_history(chat_id, user_id, "assistant", answer)
     return answer
 
+
 async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     username = update.message.from_user.username or ""
@@ -524,18 +521,25 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(part)
 
 
+# =====================================================================
+# ОСНОВНОЙ ОБРАБОТЧИК — ОТВЕЧАЕТ ТОЛЬКО ПО УПОМИНАНИЮ ИЛИ РЕПЛАЮ
+# =====================================================================
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
     text = update.message.text
     chat_id = update.message.chat.id
 
+    # === СБОР ФАКТОВ (#тег текст) ===
     if text.startswith("#"):
         saved = await save_fact_from_message(update, text)
         if saved and update.message.chat.type == "private":
             await update.message.reply_text("✅ Запомнил.")
         return
 
+    # === ГДЕ ОТВЕЧАТЬ ===
+    # В личке — на всё. В группах/супергруппах — ТОЛЬКО на @упоминание или реплай.
     is_private = update.message.chat.type == "private"
     is_reply_to_bot = (
         update.message.reply_to_message
@@ -544,10 +548,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     is_mention = (context.bot.username and f"@{context.bot.username.lower()}" in text.lower())
 
-    # В ЛИЧКЕ — отвечаем всегда. В ГРУППАХ — только по упоминанию или реплаю.
     if not (is_private or is_reply_to_bot or is_mention):
         return
 
+    # === ОТВЕТ НА ВОПРОС ===
     answer = await answer_question(update, text)
     if answer:
         for part in split_text(answer, max_length=4000):
