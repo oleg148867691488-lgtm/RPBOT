@@ -1,10 +1,10 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ)
+HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ, ВРЕМЯ ПО МСК)
 =====================================
-- /verdict доступен всем (с кулдауном и дневным лимитом)
-- Симуляция времени РП по МСК
+- Симуляция времени РП: смена дня в 00:00 МСК, 1 реальный день = ~15.2 дня РП
+- /verdict доступен всем (с кулдауном и лимитом)
 - World Bank для точных экономических данных
-- Бот в группах отвечает ТОЛЬКО по @упоминанию или реплаю
+- В группах бот отвечает ТОЛЬКО по @упоминанию или реплаю
 """
 
 import re
@@ -28,14 +28,20 @@ import database as db
 
 
 # =====================================================================
-# СИМУЛЯЦИЯ ВРЕМЕНИ РП
+# СИМУЛЯЦИЯ ВРЕМЕНИ РП (ПРИВЯЗКА К 00:00 МСК)
 # =====================================================================
 
 def get_rp_datetime() -> dict:
+    """
+    Симуляция времени РП, привязанная к реальной полуночи МСК.
+    Каждый реальный день в 00:00 МСК = +15.208 дней РП.
+    365 дней РП проходят за 24 реальных дня.
+    """
     saved_year = db.get_setting("rp_year")
     saved_start = db.get_setting("rp_start_time")
     empty = {"year": None, "month": None, "day": None, "hour": None,
-             "full": None, "elapsed_hours": 0, "rp_days": 0, "real_msk": None}
+             "full": None, "elapsed_hours": 0, "rp_days": 0, "real_msk": None,
+             "days_to_new_year": None}
     if not saved_year or not saved_start:
         return empty
     try:
@@ -44,25 +50,55 @@ def get_rp_datetime() -> dict:
     except (ValueError, TypeError):
         return empty
 
-    now_ts = time.time()
-    elapsed_real_seconds = max(0, now_ts - start_ts)
-    rp_days_passed = elapsed_real_seconds * (365 / 86400)
-    start_date = datetime(base_year, 1, 1)
-    rp_date = start_date + timedelta(days=rp_days_passed)
-
+    # Реальное время МСК
     try:
         import pytz
-        real_msk = datetime.now(pytz.timezone("Europe/Moscow")).strftime("%d.%m.%Y %H:%M:%S")
+        msk_tz = pytz.timezone("Europe/Moscow")
+        now_msk = datetime.now(msk_tz)
     except ImportError:
         from datetime import timezone
-        real_msk = datetime.now(timezone(timedelta(hours=3))).strftime("%d.%m.%Y %H:%M:%S")
+        msk_tz = timezone(timedelta(hours=3))
+        now_msk = datetime.now(msk_tz)
+
+    # Реальная дата старта (из timestamp)
+    start_msk = datetime.fromtimestamp(start_ts, msk_tz)
+
+    # Полночь старта (если старт был не в полночь, первый день начинается со следующей полуночи)
+    start_midnight = start_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+    if start_msk.hour > 0 or start_msk.minute > 0 or start_msk.second > 0:
+        start_midnight += timedelta(days=1)
+
+    now_midnight = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    real_days_passed = (now_midnight - start_midnight).days
+    if real_days_passed < 0:
+        real_days_passed = 0
+
+    # Дни РП: 365/24 ≈ 15.208 дней РП за 1 реальный день
+    rp_days_passed = real_days_passed * (365 / 24)
+
+    # Плавное движение внутри текущего реального дня
+    hours_since_midnight = now_msk.hour + now_msk.minute / 60 + now_msk.second / 3600
+    rp_hours_today = hours_since_midnight * (365 / 24 / 24)
+    rp_days_total = rp_days_passed + (rp_hours_today / 24)
+
+    start_date = datetime(base_year, 1, 1)
+    rp_date = start_date + timedelta(days=rp_days_total)
+
+    days_in_year = 365
+    days_since_year_start = rp_days_total % days_in_year
+    days_to_new_year = days_in_year - days_since_year_start
 
     return {
-        "year": rp_date.year, "month": rp_date.month, "day": rp_date.day, "hour": rp_date.hour,
+        "year": rp_date.year,
+        "month": rp_date.month,
+        "day": rp_date.day,
+        "hour": rp_date.hour,
         "full": rp_date.strftime("%d.%m.%Y %H:%M"),
-        "elapsed_hours": elapsed_real_seconds / 3600,
-        "rp_days": rp_days_passed,
-        "real_msk": real_msk,
+        "elapsed_hours": (now_msk - start_msk).total_seconds() / 3600,
+        "rp_days": rp_days_total,
+        "real_msk": now_msk.strftime("%d.%m.%Y %H:%M:%S"),
+        "days_to_new_year": days_to_new_year,
     }
 
 
