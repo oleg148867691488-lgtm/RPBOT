@@ -1,4 +1,3 @@
-
 """
 BOT.PY — ТОЧКА ВХОДА РП-БОТА
 =====================================
@@ -20,7 +19,8 @@ from config import BOT_TOKEN
 from handlers import handle_message, verdict_command
 from commands import (
     menu_command, help_command, stats_command, tags_command,
-    savechat_command, year_command,
+    savechat_command, saveworld_command, year_command,
+    info_command,
     clear_history_command, clear_facts_command,
     menu_callback,
 )
@@ -78,9 +78,10 @@ def main():
     # Telegram-бот
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # --- Админские команды ---
+    # --- Админские / владельческие команды ---
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("savechat", savechat_command))
+    app.add_handler(CommandHandler("saveworld", saveworld_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("tags", tags_command))
     app.add_handler(CommandHandler("year", year_command))
@@ -90,8 +91,9 @@ def main():
     # --- Публичные ---
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("start", help_command))
+    app.add_handler(CommandHandler("info", info_command))
 
-    # --- Вердикты (доступны всем, с лимитами) ---
+    # --- Вердикты (для всех, с лимитами) ---
     app.add_handler(CommandHandler("verdict", verdict_command))
 
     # --- Обычные сообщения (вопросы + #теги) ---
