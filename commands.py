@@ -1,7 +1,7 @@
 """
 COMMANDS.PY — КОМАНДЫ И МЕНЮ РП-БОТА
 =====================================
-/menu, /help, /stats, /tags, /savechat, /clear_history, /clear_facts
+/menu, /help, /stats, /tags, /savechat, /year, /clear_history, /clear_facts
 + инлайн-кнопки для навигации.
 """
 
@@ -38,6 +38,9 @@ def main_menu_keyboard():
             InlineKeyboardButton("📍 Где храним факты?", callback_data="menu_wheresave"),
         ],
         [
+            InlineKeyboardButton("📅 Время РП", callback_data="menu_year"),
+        ],
+        [
             InlineKeyboardButton("🧹 Очистить историю", callback_data="menu_clear_history"),
             InlineKeyboardButton("🗑 Очистить базу", callback_data="menu_clear_facts"),
         ],
@@ -60,11 +63,11 @@ def back_keyboard():
 def text_main():
     return (
         "╔══════════════════════════════╗\n"
-        "║   🤖  **SWITAI — РП-БОТ**    ║\n"
+        "║   🤖  **RP BOT AI**          ║\n"
         "╚══════════════════════════════╝\n\n"
         "📌 **Основные команды:**\n"
         "├ `#тег факт` — добавить факт в базу\n"
-        "├ `Свит, что там у...` — задать вопрос\n"
+        "├ `@RPAIBOTIK_BOT, что там у...` — задать вопрос\n"
         "└ `/verdict текст год` — получить вердикт\n\n"
         "🛠 **Админ-панель:**\n"
         "└ Жми кнопки ниже 👇\n\n"
@@ -83,16 +86,19 @@ def text_help():
         "`#россия ВВП 250 млрд (2002)`\n"
         "→ Бот запомнит факт про Россию за 2002 год.\n\n"
         "🔹 **Вопросы:**\n"
-        "`Свит, расскажи про Россию`\n"
-        "→ Бот найдёт все факты по тегу и ответит.\n"
-        "→ Если фактов нет — поищет в интернете.\n\n"
+        "`@RPAIBOTIK_BOT, расскажи про Россию`\n"
+        "→ В чате фактов можно писать просто: `расскажи про Россию`\n"
+        "→ Бот найдёт все факты по тегу и ответит.\n\n"
         "🔹 **Вердикты:**\n"
         "`/verdict Ввести санкции против США 2008`\n"
         "или ответь на сообщение командой `/verdict 2008`\n"
-        "→ Бот выдаст: оценку, риски, предложения.\n"
-        "→ Вердикт сохранится и будет учтён в будущем.\n\n"
+        "→ Бот выдаст: оценку, риски, предложения.\n\n"
         "🔹 **Сохранение чата:**\n"
         "`/savechat` — сделать этот чат хранилищем фактов.\n\n"
+        "🔹 **Время РП:**\n"
+        "`/year 2010` — установить стартовый год РП.\n"
+        "→ Дальше время идёт автоматически: 1 реальный час ≈ 15 дней РП.\n"
+        "`/year` — показать текущую дату в РП.\n\n"
         "──────────────────────────────\n"
         "💡 _Совет: указывай год в (скобках) — бот поймёт._"
     )
@@ -168,6 +174,30 @@ def text_where_save():
         )
 
 
+def text_year():
+    from handlers import get_rp_datetime
+    rp = get_rp_datetime()
+    if rp["year"]:
+        return (
+            "╔══════════════════════════════╗\n"
+            "║      📅 **ВРЕМЯ РП**         ║\n"
+            "╚══════════════════════════════╝\n\n"
+            f"📆 Дата: **{rp['full']}** (МСК)\n"
+            f"🕐 Час: {rp['hour']}:00\n\n"
+            "⚡ Скорость: 1 реальный час ≈ 15 дней РП.\n"
+            "Дата обновляется автоматически.\n\n"
+            "Сменить стартовый год: `/year 2010`"
+        )
+    else:
+        return (
+            "╔══════════════════════════════╗\n"
+            "║      📅 **ВРЕМЯ РП**         ║\n"
+            "╚══════════════════════════════╝\n\n"
+            "⚠️ Год РП не установлен.\n\n"
+            "Напиши `/year 2010`, чтобы запустить симуляцию времени."
+        )
+
+
 # =====================================================================
 # КОМАНДЫ
 # =====================================================================
@@ -202,7 +232,6 @@ async def tags_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def savechat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохраняет текущий чат как хранилище фактов."""
     if not is_admin(update.message.from_user.id, update.message.from_user.username):
         await update.message.reply_text("❌ Команда только для админа.")
         return
@@ -218,8 +247,42 @@ async def savechat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "╚══════════════════════════════╝\n\n"
         f"📌 Чат: **{chat_title}**\n"
         f"🆔 ID: `{chat_id}`\n\n"
-        "Теперь бот будет собирать факты с `#тег` **только в этом чате**.\n"
-        "Все остальные чаты — только для вопросов.",
+        "Теперь бот будет собирать факты с `#тег` **только в этом чате**.",
+        parse_mode="Markdown"
+    )
+
+
+async def year_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from handlers import get_rp_datetime
+    import time
+    
+    if not is_admin(update.message.from_user.id, update.message.from_user.username):
+        await update.message.reply_text("❌ Только админ может менять год.")
+        return
+
+    args = context.args
+    if not args:
+        await update.message.reply_text(text_year(), parse_mode="Markdown")
+        return
+
+    try:
+        year = int(args[0])
+        if year < 1900 or year > 2100:
+            await update.message.reply_text("❌ Год должен быть от 1900 до 2100.")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ Укажи год числом. Пример: `/year 2010`", parse_mode="Markdown")
+        return
+
+    db.set_setting("rp_year", str(year))
+    db.set_setting("rp_start_time", str(time.time()))
+
+    await update.message.reply_text(
+        f"📅 **Год РП установлен на {year}.**\n\n"
+        f"🕐 Старт: сейчас (МСК).\n"
+        f"⚡ Скорость: 1 реальный час ≈ 15 дней РП.\n\n"
+        f"Дата будет меняться автоматически.\n"
+        f"Проверить текущую дату: `/year`",
         parse_mode="Markdown"
     )
 
@@ -267,6 +330,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text_help(), reply_markup=back_keyboard(), parse_mode="Markdown")
     elif data == "menu_wheresave":
         await query.edit_message_text(text_where_save(), reply_markup=back_keyboard(), parse_mode="Markdown")
+    elif data == "menu_year":
+        await query.edit_message_text(text_year(), reply_markup=back_keyboard(), parse_mode="Markdown")
     elif data == "menu_savechat":
         chat_id = query.message.chat.id
         chat_title = query.message.chat.title or "Личка"
@@ -306,4 +371,4 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🗑 *База фактов полностью очищена.*",
             reply_markup=back_keyboard(),
             parse_mode="Markdown"
-    )
+        )
