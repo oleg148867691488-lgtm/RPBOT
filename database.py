@@ -1,7 +1,7 @@
 """
-DATABASE.PY — БАЗА ЗНАНИЙ ДЛЯ РП-БОТА (TURSO)
+DATABASE.PY — БАЗА ЗНАНИЙ ДЛЯ РП-БОТА (АКТУАЛЬНЫЙ LIBSQL)
 =====================================
-Облачная SQLite через Turso. Данные не стираются при перезапуске Render.
+Использует официальный пакет `libsql` (не устаревший libsql_client).
 """
 
 import os
@@ -15,31 +15,42 @@ from config import TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
 # ПОДКЛЮЧЕНИЕ
 # =====================================================================
 
-if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
-    import libsql_client
-    DB_CLIENT = libsql_client.create_client_sync(
-        url=TURSO_DATABASE_URL,
-        auth_token=TURSO_AUTH_TOKEN
-    )
-else:
-    # Локальный fallback (для тестов на компе без Turso)
-    import sqlite3
-    DB_CLIENT = None
-    LOCAL_DB = "facts.db"
+_conn = None
+
+
+def get_conn():
+    """Ленивое подключение к Turso (или локальному SQLite)."""
+    global _conn
+    if _conn is None:
+        import libsql
+        if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
+            # Turso Cloud
+            _conn = libsql.connect(
+                database=TURSO_DATABASE_URL,
+                auth_token=TURSO_AUTH_TOKEN
+            )
+        else:
+            # Локальный fallback для тестов
+            _conn = libsql.connect("facts.db")
+    return _conn
 
 
 def execute(query: str, params: tuple = ()):
-    """Универсальное выполнение запроса: Turso или локальный SQLite."""
-    if DB_CLIENT:
-        return DB_CLIENT.execute(query, params)
-    else:
-        conn = sqlite3.connect(LOCAL_DB)
-        conn.row_factory = sqlite3.Row
-        cur = conn.execute(query, params)
-        conn.commit()
+    """Универсальное выполнение запроса через libsql."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(query, params)
+
+    # Если запрос возвращает строки (SELECT) — возвращаем их
+    if cur.description:
+        columns = [desc[0] for desc in cur.description]
         rows = cur.fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
+        conn.commit()
+        return [dict(zip(columns, row)) for row in rows]
+
+    # Для INSERT/UPDATE/DELETE — коммитим и возвращаем пустоту
+    conn.commit()
+    return []
 
 
 # =====================================================================
@@ -93,28 +104,20 @@ def init_db():
 
 
 # =====================================================================
-# SETTINGS (чат для фактов и прочее)
+# SETTINGS (год РП и прочее)
 # =====================================================================
 
 def set_setting(key: str, value: str):
-    """Устанавливает/обновляет настройку."""
     execute(
-        """INSERT INTO settings (key, value) VALUES (?, ?)
-           ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+        "INSERT INTO settings (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value)
     )
 
 
 def get_setting(key: str, default: str = None):
-    """Возвращает значение настройки или default."""
     rows = execute("SELECT value FROM settings WHERE key = ?", (key,))
-    if rows:
-        return rows[0]["value"]
-    return default
-
-
-def delete_setting(key: str):
-    execute("DELETE FROM settings WHERE key = ?", (key,))
+    return rows[0]["value"] if rows else default
 
 
 # =====================================================================
@@ -146,16 +149,6 @@ def get_facts_by_tag(tag: str, include_verdicts: bool = True, limit: int = 200):
     )
 
 
-def get_facts_by_year(tag: str, year: int, tolerance: int = 0):
-    tag = tag.lower().strip()
-    return execute(
-        """SELECT * FROM facts
-           WHERE tag = ? AND year IS NOT NULL AND year BETWEEN ? AND ?
-           ORDER BY year ASC""",
-        (tag, year - tolerance, year + tolerance)
-    )
-
-
 def get_all_tags():
     return execute(
         """SELECT tag, COUNT(*) AS cnt, COALESCE(SUM(is_verdict), 0) AS verdicts
@@ -170,11 +163,6 @@ def search_facts(query: str, limit: int = 50):
     )
 
 
-def delete_fact(fact_id: int) -> bool:
-    execute("DELETE FROM facts WHERE id = ?", (fact_id,))
-    return True
-
-
 def clear_by_tag(tag: str) -> int:
     execute("DELETE FROM facts WHERE tag = ?", (tag.lower().strip(),))
     return 1
@@ -185,9 +173,9 @@ def clear_all_facts():
 
 
 def get_stats():
-    total    = execute("SELECT COUNT(*) AS cnt FROM facts;")[0]["cnt"]
+    total = execute("SELECT COUNT(*) AS cnt FROM facts;")[0]["cnt"]
     verdicts = execute("SELECT COUNT(*) AS cnt FROM facts WHERE is_verdict = 1;")[0]["cnt"]
-    tags     = execute("SELECT COUNT(DISTINCT tag) AS cnt FROM facts;")[0]["cnt"]
+    tags = execute("SELECT COUNT(DISTINCT tag) AS cnt FROM facts;")[0]["cnt"]
     return {"total": total, "verdicts": verdicts, "tags": tags}
 
 
@@ -223,8 +211,6 @@ def get_old_messages_for_summary(chat_id: int, user_id: int, batch: int = 20):
 
 
 def archive_messages(message_ids: list):
-    if not message_ids:
-        return
     for mid in message_ids:
         execute("UPDATE history SET is_archived = 1 WHERE id = ?", (mid,))
 
@@ -247,11 +233,10 @@ def clear_history(chat_id: int = None, user_id: int = None):
 
 
 # =====================================================================
-# КУЛДАУНЫ (антиспам)
+# КУЛДАУНЫ
 # =====================================================================
 
 def check_cooldown(user_id: int, cooldown_seconds: float, is_verdict: bool = False) -> bool:
-    """True — можно писать. False — ещё в кулдауне."""
     now = time.time()
     rows = execute("SELECT last_request, last_verdict FROM cooldowns WHERE user_id = ?", (user_id,))
 
@@ -259,7 +244,6 @@ def check_cooldown(user_id: int, cooldown_seconds: float, is_verdict: bool = Fal
         last = rows[0]["last_verdict"] if is_verdict else rows[0]["last_request"]
         if now - last < cooldown_seconds:
             return False
-
         if is_verdict:
             execute("UPDATE cooldowns SET last_verdict = ? WHERE user_id = ?", (now, user_id))
         else:
@@ -273,4 +257,7 @@ def check_cooldown(user_id: int, cooldown_seconds: float, is_verdict: bool = Fal
 
 
 # === Инициализация при импорте ===
-init_db()
+try:
+    init_db()
+except Exception as e:
+    print(f"⚠️ Не удалось инициализировать Turso: {e}")
