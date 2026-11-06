@@ -1,4 +1,3 @@
-
 """
 BOT.PY — ТОЧКА ВХОДА РП-БОТА
 =====================================
@@ -20,7 +19,8 @@ from config import BOT_TOKEN
 from handlers import handle_message, verdict_command
 from commands import (
     menu_command, help_command, stats_command, tags_command,
-    savechat_command, clear_history_command, clear_facts_command,
+    savechat_command, year_command,
+    clear_history_command, clear_facts_command,
     menu_callback,
 )
 
@@ -54,7 +54,7 @@ def run_web():
 
 
 # =====================================================================
-# ОБРАБОТЧИК ОШИБОК (чтобы бот не падал от разовых сбоев)
+# ОБРАБОТЧИК ОШИБОК
 # =====================================================================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Exception while handling an update:", exc_info=context.error)
@@ -82,6 +82,7 @@ def main():
     app.add_handler(CommandHandler("savechat", savechat_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("tags", tags_command))
+    app.add_handler(CommandHandler("year", year_command))
     app.add_handler(CommandHandler("clear_history", clear_history_command))
     app.add_handler(CommandHandler("clear_facts", clear_facts_command))
 
@@ -89,7 +90,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("start", help_command))
 
-    # --- Вердикты (отдельный CommandHandler) ---
+    # --- Вердикты ---
     app.add_handler(CommandHandler("verdict", verdict_command))
 
     # --- Обычные сообщения (вопросы + #теги) ---
