@@ -10,9 +10,8 @@ FACTS_CHAT_ID = int(os.getenv("FACTS_CHAT_ID", "0"))
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8283458488"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "cakemogus")
 
-# === ВЛАДЕЛЕЦ РП (Леклерк) ===
-# Узнать ID через @userinfobot
-RP_OWNER_ID = int(os.getenv("RP_OWNER_ID", "0"))
+# === ВЛАДЕЛЕЦ РП (Леклерк) — ЗАХАРДКОЖЕН ===
+RP_OWNER_ID = int(os.getenv("RP_OWNER_ID", "7598252516"))
 RP_OWNER_USERNAME = os.getenv("RP_OWNER_USERNAME", "")
 
 # === GROQ (3 ключа с разных аккаунтов) ===
@@ -26,11 +25,11 @@ GROQ_KEY_SUMMARY = os.getenv("GROQ_KEY_3")   # суммаризация исто
 GROQ_ALL_KEYS = [k for k in [GROQ_KEY_MAIN, GROQ_KEY_VERDICT, GROQ_KEY_SUMMARY] if k]
 
 # === МОДЕЛИ ===
-MODEL_MAIN    = "qwen/qwen3.8-27b"          # быстрая и умная для диалога
-MODEL_VERDICT = "openai/gpt-oss-120b"       # мощная для глубокого анализа
+MODEL_MAIN    = "qwen/qwen3.8-27b"          # быстрая для диалога
+MODEL_VERDICT = "openai/gpt-oss-120b"       # мощная для анализа
 MODEL_SUMMARY = "openai/gpt-oss-20b"        # самая быстрая для сжатия
 
-# === GEMINI (опционально, как крайний fallback) ===
+# === GEMINI (опционально, как fallback) ===
 GEMINI_KEY = os.getenv("GEMINI_KEY")
 GEMINI_URL_TEMPLATE = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -47,7 +46,7 @@ TURSO_AUTH_TOKEN   = os.getenv("TURSO_KEY")
 
 # === НАСТРОЙКИ ПОВЕДЕНИЯ ===
 COOLDOWN_DIALOG    = 3.0    # сек между обычными сообщениями
-COOLDOWN_VERDICT   = 15.0   # сек между вердиктами (для админа; для игроков 30 сек в handlers)
+COOLDOWN_VERDICT   = 15.0   # сек между вердиктами (для админа; игроки 30 сек в handlers)
 HISTORY_CONTEXT_LIMIT        = 15   # сколько последних сообщений идёт в промпт
 HISTORY_SUMMARIZE_THRESHOLD  = 30   # при скольких сообщениях запускать сжатие
 HISTORY_SUMMARIZE_BATCH      = 20   # сколько старых сообщений сжимать за раз
