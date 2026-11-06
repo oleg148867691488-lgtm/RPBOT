@@ -87,7 +87,7 @@ def text_help():
         "→ Бот запомнит факт про Россию за 2002 год.\n\n"
         "🔹 **Вопросы:**\n"
         "`@RPAIBOTIK_BOT, расскажи про Россию`\n"
-        "→ В чате фактов можно писать просто: `расскажи про Россию`\n"
+        "→ В личке можно писать просто: `расскажи про Россию`\n"
         "→ Бот найдёт все факты по тегу и ответит.\n\n"
         "🔹 **Вердикты:**\n"
         "`/verdict Ввести санкции против США 2008`\n"
@@ -182,10 +182,12 @@ def text_year():
             "╔══════════════════════════════╗\n"
             "║      📅 **ВРЕМЯ РП**         ║\n"
             "╚══════════════════════════════╝\n\n"
-            f"📆 Дата: **{rp['full']}** (МСК)\n"
-            f"🕐 Час: {rp['hour']}:00\n\n"
-            "⚡ Скорость: 1 реальный час ≈ 15 дней РП.\n"
-            "Дата обновляется автоматически.\n\n"
+            f"📆 **Дата в РП:** {rp['full']}\n"
+            f"📅 Год: {rp['year']}\n\n"
+            f"🕐 Реальное МСК: {rp['real_msk']}\n"
+            f"⏱ Прошло (реал): {rp['elapsed_hours']:.2f} ч.\n"
+            f"📊 Дней РП прошло: {rp['rp_days']:.1f}\n\n"
+            "⚡ Скорость: 1 реальный час ≈ 15 дней РП.\n\n"
             "Сменить стартовый год: `/year 2010`"
         )
     else:
@@ -253,7 +255,6 @@ async def savechat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def year_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from handlers import get_rp_datetime
     import time
     
     if not is_admin(update.message.from_user.id, update.message.from_user.username):
