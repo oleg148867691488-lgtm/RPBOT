@@ -1,7 +1,7 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ, ВРЕМЯ ПО МСК)
+HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ)
 =====================================
-- Симуляция времени РП: смена дня в 00:00 МСК, 1 реальный день = ~15.2 дня РП
+- Симуляция времени РП: 1 год РП = 36 реальных часов (~10.14 дня РП/час)
 - /verdict доступен всем (с кулдауном и лимитом)
 - World Bank для точных экономических данных
 - В группах бот отвечает ТОЛЬКО по @упоминанию или реплаю
@@ -28,14 +28,14 @@ import database as db
 
 
 # =====================================================================
-# СИМУЛЯЦИЯ ВРЕМЕНИ РП (ПРИВЯЗКА К 00:00 МСК)
+# СИМУЛЯЦИЯ ВРЕМЕНИ РП (1 ГОД = 36 РЕАЛЬНЫХ ЧАСОВ)
 # =====================================================================
 
 def get_rp_datetime() -> dict:
     """
-    Симуляция времени РП, привязанная к реальной полуночи МСК.
-    Каждый реальный день в 00:00 МСК = +15.208 дней РП.
-    365 дней РП проходят за 24 реальных дня.
+    Симуляция времени РП.
+    1 год РП (365 дней) = 36 реальных часов (1.5 реальных дня).
+    Скорость: 365 / 36 ≈ 10.14 дней РП за 1 реальный час.
     """
     saved_year = db.get_setting("rp_year")
     saved_start = db.get_setting("rp_start_time")
@@ -50,7 +50,6 @@ def get_rp_datetime() -> dict:
     except (ValueError, TypeError):
         return empty
 
-    # Реальное время МСК
     try:
         import pytz
         msk_tz = pytz.timezone("Europe/Moscow")
@@ -60,34 +59,20 @@ def get_rp_datetime() -> dict:
         msk_tz = timezone(timedelta(hours=3))
         now_msk = datetime.now(msk_tz)
 
-    # Реальная дата старта (из timestamp)
     start_msk = datetime.fromtimestamp(start_ts, msk_tz)
 
-    # Полночь старта (если старт был не в полночь, первый день начинается со следующей полуночи)
-    start_midnight = start_msk.replace(hour=0, minute=0, second=0, microsecond=0)
-    if start_msk.hour > 0 or start_msk.minute > 0 or start_msk.second > 0:
-        start_midnight += timedelta(days=1)
+    elapsed_real_hours = (now_msk - start_msk).total_seconds() / 3600
+    if elapsed_real_hours < 0:
+        elapsed_real_hours = 0
 
-    now_midnight = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    real_days_passed = (now_midnight - start_midnight).days
-    if real_days_passed < 0:
-        real_days_passed = 0
-
-    # Дни РП: 365/24 ≈ 15.208 дней РП за 1 реальный день
-    rp_days_passed = real_days_passed * (365 / 24)
-
-    # Плавное движение внутри текущего реального дня
-    hours_since_midnight = now_msk.hour + now_msk.minute / 60 + now_msk.second / 3600
-    rp_hours_today = hours_since_midnight * (365 / 24 / 24)
-    rp_days_total = rp_days_passed + (rp_hours_today / 24)
+    speed = 365 / 36
+    rp_days_total = elapsed_real_hours * speed
 
     start_date = datetime(base_year, 1, 1)
     rp_date = start_date + timedelta(days=rp_days_total)
 
-    days_in_year = 365
-    days_since_year_start = rp_days_total % days_in_year
-    days_to_new_year = days_in_year - days_since_year_start
+    days_since_year_start = rp_days_total % 365
+    days_to_new_year = 365 - days_since_year_start
 
     return {
         "year": rp_date.year,
@@ -95,7 +80,7 @@ def get_rp_datetime() -> dict:
         "day": rp_date.day,
         "hour": rp_date.hour,
         "full": rp_date.strftime("%d.%m.%Y %H:%M"),
-        "elapsed_hours": (now_msk - start_msk).total_seconds() / 3600,
+        "elapsed_hours": elapsed_real_hours,
         "rp_days": rp_days_total,
         "real_msk": now_msk.strftime("%d.%m.%Y %H:%M:%S"),
         "days_to_new_year": days_to_new_year,
