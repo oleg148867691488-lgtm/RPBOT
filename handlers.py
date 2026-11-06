@@ -2,7 +2,7 @@
 HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ)
 =====================================
 - Симуляция времени: 2 реальных часа = 1 месяц РП, 24 часа = 1 год РП
-- /verdict доступен всем (с кулдауном и лимитом)
+- /verdict доступен всем: 25/день для игроков (30 сек кулдаун), 100/день для админа (15 сек)
 - World Bank для точных экономических данных
 - В группах бот отвечает ТОЛЬКО по @упоминанию или реплаю
 """
@@ -393,7 +393,9 @@ async def answer_question(update: Update, text: str) -> str:
 
 
 # =====================================================================
-# ВЕРДИКТ ДЛЯ ВСЕХ (С ЛИМИТАМИ)
+# ВЕРДИКТ ДЛЯ ВСЕХ
+# Админ: 15 сек кулдаун, 100/день
+# Игрок: 30 сек кулдаун, 25/день
 # =====================================================================
 
 async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -401,12 +403,12 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.message.from_user.username or ""
     is_adm = is_admin(user_id, username)
 
-    cooldown = 15.0 if is_adm else 60.0
+    cooldown = 15.0 if is_adm else 30.0
     if not db.check_cooldown(user_id, cooldown, is_verdict=True):
         await update.message.reply_text(f"⏳ Подожди {int(cooldown)} сек перед новым вердиктом.")
         return
 
-    daily_limit = 100 if is_adm else 5
+    daily_limit = 100 if is_adm else 25
     today = datetime.utcnow().strftime("%Y-%m-%d")
     limit_key = f"verdict_limit_{user_id}_{today}"
     used_today = int(db.get_setting(limit_key, "0"))
