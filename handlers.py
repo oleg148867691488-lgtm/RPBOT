@@ -1,9 +1,10 @@
 """
 HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ)
 =====================================
+- /verdict доступен всем (с кулдауном и дневным лимитом)
+- Симуляция времени РП по МСК
+- World Bank для точных экономических данных
 - Бот в группах отвечает ТОЛЬКО по @упоминанию или реплаю
-- В личке — на всё
-- Симуляция времени РП по UTC-эпохе
 """
 
 import re
@@ -33,13 +34,10 @@ import database as db
 def get_rp_datetime() -> dict:
     saved_year = db.get_setting("rp_year")
     saved_start = db.get_setting("rp_start_time")
-
     empty = {"year": None, "month": None, "day": None, "hour": None,
              "full": None, "elapsed_hours": 0, "rp_days": 0, "real_msk": None}
-
     if not saved_year or not saved_start:
         return empty
-
     try:
         base_year = int(saved_year)
         start_ts = float(saved_start)
@@ -49,7 +47,6 @@ def get_rp_datetime() -> dict:
     now_ts = time.time()
     elapsed_real_seconds = max(0, now_ts - start_ts)
     rp_days_passed = elapsed_real_seconds * (365 / 86400)
-
     start_date = datetime(base_year, 1, 1)
     rp_date = start_date + timedelta(days=rp_days_passed)
 
@@ -61,10 +58,7 @@ def get_rp_datetime() -> dict:
         real_msk = datetime.now(timezone(timedelta(hours=3))).strftime("%d.%m.%Y %H:%M:%S")
 
     return {
-        "year": rp_date.year,
-        "month": rp_date.month,
-        "day": rp_date.day,
-        "hour": rp_date.hour,
+        "year": rp_date.year, "month": rp_date.month, "day": rp_date.day, "hour": rp_date.hour,
         "full": rp_date.strftime("%d.%m.%Y %H:%M"),
         "elapsed_hours": elapsed_real_seconds / 3600,
         "rp_days": rp_days_passed,
@@ -347,10 +341,7 @@ async def answer_question(update: Update, text: str) -> str:
             relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
 
     rp = get_rp_datetime()
-    if rp["year"]:
-        date_line = f"Сейчас в РП: {rp['day']} числа, {rp['month']} месяца, {rp['hour']}:00, {rp['year']} год. "
-    else:
-        date_line = ""
+    date_line = f"Сейчас в РП: {rp['day']} числа, {rp['month']} месяца, {rp['hour']}:00, {rp['year']} год. " if rp["year"] else ""
 
     system_parts = [
         f"Ты — аналитический РП-бот. {date_line}Отвечай кратко, по делу, только на русском.",
@@ -383,14 +374,27 @@ async def answer_question(update: Update, text: str) -> str:
     return answer
 
 
+# =====================================================================
+# ВЕРДИКТ ДЛЯ ВСЕХ (С ЛИМИТАМИ)
+# =====================================================================
+
 async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     username = update.message.from_user.username or ""
-    if not is_admin(user_id, username):
-        await update.message.reply_text("❌ Только админ может делать вердикты.")
+    is_adm = is_admin(user_id, username)
+
+    cooldown = 15.0 if is_adm else 60.0
+    if not db.check_cooldown(user_id, cooldown, is_verdict=True):
+        await update.message.reply_text(f"⏳ Подожди {int(cooldown)} сек перед новым вердиктом.")
         return
-    if not db.check_cooldown(user_id, COOLDOWN_VERDICT, is_verdict=True):
-        await update.message.reply_text(f"⏳ Подожди {int(COOLDOWN_VERDICT)} сек.")
+
+    daily_limit = 100 if is_adm else 5
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    limit_key = f"verdict_limit_{user_id}_{today}"
+    used_today = int(db.get_setting(limit_key, "0"))
+
+    if used_today >= daily_limit:
+        await update.message.reply_text(f"⏳ Дневной лимит вердиктов исчерпан ({daily_limit}/{daily_limit}). Попробуй завтра.")
         return
 
     raw = update.message.text or ""
@@ -402,25 +406,19 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     rp = get_rp_datetime()
-    rp_year = rp["year"]
-    rp_month = rp["month"]
-    rp_day = rp["day"]
-    rp_hour = rp["hour"]
-
     year = None
     ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", text)
     if ym:
         year = int(ym.group(1))
         text = text[:ym.start()].strip()
     else:
-        year = rp_year
+        year = rp["year"]
 
-    if year and rp_month and rp_day:
-        date_context = f"Сейчас в РП: {rp_day} числа, {rp_month} месяца, {rp_hour}:00, {year} год.\n"
+    date_context = ""
+    if year and rp["month"] and rp["day"]:
+        date_context = f"Сейчас в РП: {rp['day']} числа, {rp['month']} месяца, {rp['hour']}:00, {year} год.\n"
     elif year:
         date_context = f"Сейчас в РП: {year} год.\n"
-    else:
-        date_context = ""
 
     year_display = f" ({year})" if year else ""
 
@@ -434,68 +432,34 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
 
     wb_context = await get_economic_context(text)
-
     facts_str = "\n".join([f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "") for f in relevant_facts[:30]]) if relevant_facts else "Нет сохранённых фактов."
 
     system_prompt = (
         f"Ты — строгий Гейм-Мастер геополитической РП-игры.\n"
         f"{date_context}\n"
-        "ТВОЯ ГЛАВНАЯ ЗАДАЧА — проверить заявку на NRP (нарушение реализма), "
-        "СВЕРИВ ЕЁ С ФАКТАМИ ИЗ БАЗЫ И С РЕАЛЬНОЙ ИСТОРИЕЙ. Только потом — вердикт.\n\n"
-        "🔍 ПРОВЕРКА NRP (делай ЭТО ПЕРВЫМ ДЕЛОМ):\n"
-        "1. Прочитай ВСЕ факты из базы ниже. Это — история страны в РП.\n"
-        "2. Сверь заявку с фактами из базы И С РЕАЛЬНОЙ ИСТОРИЕЙ:\n"
-        "   • Если игрок пишет «промышленность выросла в 10 раз», а в базе НЕТ фактов "
-        "о строительстве заводов, НО в реальности в этот период были построены крупные заводы — "
-        "считай это допустимым.\n"
-        "   • Если игрок пишет «армия выросла до 5 млн», а в базе НЕТ мобилизации, "
-        "НО в реальности страна проводила мобилизацию — считай это допустимым.\n"
-        "   • Если игрок пишет «построил 500 кораблей за год», а в базе и в реальности "
-        "не было ни верфей, ни судостроительных программ — это NRP.\n"
-        "   • Если игрок пишет «технология X», а в базе нет её разработки, и в реальности "
-        "её не существовало в указанный год — это NRP.\n"
-        "3. Если нашёл NRP — ответь ТОЛЬКО так (без вердикта и оценок):\n"
-        "   '🚨 NRP: [причина]. Согласно базе знаний и реальной истории, [что есть на самом деле]. "
-        "   Для такого роста нужны предварительные действия: [какие].'\n\n"
+        "ТВОЯ ГЛАВНАЯ ЗАДАЧА — проверить заявку на NRP, СВЕРИВ ЕЁ С ФАКТАМИ ИЗ БАЗЫ И С РЕАЛЬНОЙ ИСТОРИЕЙ. Только потом — вердикт.\n\n"
+        "🔍 ПРОВЕРКА NRP:\n"
+        "1. Прочитай ВСЕ факты из базы ниже.\n"
+        "2. Сверь заявку с фактами и реальной историей:\n"
+        "   • Если игрок пишет «промышленность выросла в 10 раз», а в базе НЕТ заводов, НО в реальности они были — допустимо.\n"
+        "   • Если игрок пишет «армия 5 млн», а в базе НЕТ мобилизации, НО в реальности она была — допустимо.\n"
+        "   • Если игрок пишет «500 кораблей за год», а в базе и реальности не было верфей — NRP.\n"
+        "   • Если игрок пишет «технология X», а её не было в указанный год — NRP.\n"
+        "3. Если NRP — ответь ТОЛЬКО так: '🚨 NRP: [причина]. Согласно базе и реальной истории, [что есть]. Для роста нужны: [какие действия].'\n\n"
         "✅ Если NRP нет — выдай полный вердикт по формату ниже.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ФОРМАТ ПОЛНОГО ВЕРДИКТА:\n"
-        f"Вердикт: [Краткое название ситуации]{year_display}\n\n"
+        "ФОРМАТ:\n"
+        f"Вердикт: [Название]{year_display}\n\n"
         "Общая оценка: [Оценка/10] — краткое резюме.\n\n"
-        "---\n\n"
-        "1. [Аспект ситуации]\n"
-        "Вердикт: [Оценка/10].\n"
-        "• Плюс: [плюсы]\n"
-        "• Риск: [риски]\n"
-        "• Оценка: [Оценка/10].\n\n"
-        "1.1. [Подпункт]\n"
-        "Вердикт: [Оценка/10].\n"
-        "• Плюс: [плюсы]\n"
-        "• Риск: [риски]\n"
-        "• Оценка: [Оценка/10].\n\n"
-        "Итог по аспекту: [Оценка/10]. [Краткий вывод]\n\n"
-        "---\n\n"
-        "Итоговый вердикт:\n"
-        "• [Аспект 1]: [Оценка/10]\n"
-        "• Общий итог: [Оценка/10]\n\n"
-        "Рекомендации:\n"
-        "1. [Рекомендация 1]\n"
-        "2. [Рекомендация 2]\n"
-        "3. [Рекомендация 3]\n\n"
-        "ПРАВИЛА:\n"
-        "1. Используй ТОЛЬКО предоставленные факты и текст ситуации.\n"
-        "2. НЕ ВЫДУМЫВАЙ числа.\n"
-        "3. Будь справедлив. NRP — только физически невозможное. Всё остальное — реалистично, если есть факты или исторические предпосылки.\n\n"
-        "═══════════════════════════════════════════\n"
+        "1. [Аспект]\nВердикт: [Оценка/10].\n• Плюс: [плюсы]\n• Риск: [риски]\n\n"
+        "Итоговый вердикт:\n• [Аспект]: [Оценка/10]\n• Общий итог: [Оценка/10]\n\n"
+        "Рекомендации:\n1. [Рекомендация]\n2. [Рекомендация]\n3. [Рекомендация]\n\n"
+        "ПРАВИЛА:\n1. Только предоставленные факты.\n2. НЕ ВЫДУМЫВАЙ числа.\n3. NRP — только физически невозможное.\n\n"
         f"📚 ФАКТЫ ИЗ БАЗЫ:\n{facts_str}"
     )
     if wb_context:
         system_prompt += f"\n\n{wb_context}"
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Ситуация: {text}"},
-    ]
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Ситуация: {text}"}]
 
     verdict = await call_groq(GROQ_KEY_VERDICT, MODEL_VERDICT, messages, temperature=0.6)
     if not verdict:
@@ -509,9 +473,12 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if t["tag"] in text_lower:
             save_tag = t["tag"]
             break
+    if not is_adm:
+        save_tag = f"игрок_{save_tag}"
 
     fact_text = f"[ВЕРДИКТ] {text[:300]} → {verdict[:400]}"
     db.add_fact(save_tag, fact_text, user_id, username, year, is_verdict=True)
+    db.set_setting(limit_key, str(used_today + 1))
 
     parts = split_text(verdict, max_length=4000)
     for part in parts:
@@ -522,7 +489,7 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =====================================================================
-# ОСНОВНОЙ ОБРАБОТЧИК — ОТВЕЧАЕТ ТОЛЬКО ПО УПОМИНАНИЮ ИЛИ РЕПЛАЮ
+# ОСНОВНОЙ ОБРАБОТЧИК
 # =====================================================================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -531,15 +498,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     chat_id = update.message.chat.id
 
-    # === СБОР ФАКТОВ (#тег текст) ===
     if text.startswith("#"):
         saved = await save_fact_from_message(update, text)
         if saved and update.message.chat.type == "private":
             await update.message.reply_text("✅ Запомнил.")
         return
 
-    # === ГДЕ ОТВЕЧАТЬ ===
-    # В личке — на всё. В группах/супергруппах — ТОЛЬКО на @упоминание или реплай.
     is_private = update.message.chat.type == "private"
     is_reply_to_bot = (
         update.message.reply_to_message
@@ -551,7 +515,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (is_private or is_reply_to_bot or is_mention):
         return
 
-    # === ОТВЕТ НА ВОПРОС ===
     answer = await answer_question(update, text)
     if answer:
         for part in split_text(answer, max_length=4000):
