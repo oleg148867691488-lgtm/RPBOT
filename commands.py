@@ -1,13 +1,15 @@
 """
 COMMANDS.PY — КОМАНДЫ И МЕНЮ РП-БОТА
 =====================================
-/menu, /help, /stats, /tags, /savechat, /saveworld, /info, /year,
-/clear_history, /clear_facts + инлайн-кнопки.
+/menu, /help, /stats, /tags, /savechat, /saveworld, /info,
+/year, /bulk, /bulkworld, /clear_history, /clear_facts
++ инлайн-кнопки.
 """
 
 import os
 import re
 import json
+import time
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -25,7 +27,7 @@ import database as db
 # ПРОВЕРКА ПРАВ
 # =====================================================================
 
-def is_admin(user_id: int, username: str) -> bool:
+def is_admin(user_id: int, username: str, chat_id: int = None) -> bool:
     if user_id == ADMIN_ID:
         return True
     if RP_OWNER_ID and user_id == RP_OWNER_ID:
@@ -40,6 +42,10 @@ def is_admin(user_id: int, username: str) -> bool:
                 return True
         except Exception:
             pass
+    if chat_id:
+        from handlers import is_chat_admin
+        if is_chat_admin(chat_id, user_id):
+            return True
     return False
 
 
@@ -54,11 +60,11 @@ def main_menu_keyboard():
             InlineKeyboardButton("🏷 Теги", callback_data="menu_tags"),
         ],
         [
-            InlineKeyboardButton("💾 Сохранить чат фактов", callback_data="menu_savechat"),
-            InlineKeyboardButton("🌍 Сохранить чат мировых", callback_data="menu_saveworld"),
+            InlineKeyboardButton("💾 Чат фактов", callback_data="menu_savechat"),
+            InlineKeyboardButton("🌍 Чат мировых", callback_data="menu_saveworld"),
         ],
         [
-            InlineKeyboardButton("📍 Где храним факты?", callback_data="menu_wheresave"),
+            InlineKeyboardButton("📍 Где храним?", callback_data="menu_wheresave"),
             InlineKeyboardButton("📅 Время РП", callback_data="menu_year"),
         ],
         [
@@ -78,7 +84,7 @@ def back_keyboard():
 
 
 # =====================================================================
-# ТЕКСТЫ ЭКРАНОВ
+# ТЕКСТЫ
 # =====================================================================
 
 def text_main():
@@ -90,7 +96,8 @@ def text_main():
         "├ `#тег факт` — добавить факт\n"
         "├ `@RPAIBOTIK_BOT, что там у...` — вопрос\n"
         "├ `/verdict текст [год]` — вердикт\n"
-        "└ `/info страна` — сводка по стране\n\n"
+        "├ `/info страна` — сводка по стране\n"
+        "└ `/bulk` — массовый импорт\n\n"
         "🛠 **Админ-панель:**\n"
         "└ Жми кнопки ниже 👇\n\n"
         "──────────────────────────────\n"
@@ -104,38 +111,36 @@ def text_help():
         "║      📖  **ПОМОЩЬ**          ║\n"
         "╚══════════════════════════════╝\n\n"
         "🔹 **Сбор фактов:**\n"
-        "Пиши в чате, сохранённом через `/savechat`:\n"
+        "В чате, сохранённом через `/savechat`:\n"
         "`#россия ВВП 250 млрд (2002)`\n"
-        "→ Бот запомнит факт.\n"
-        "→ Если факт NRP — отметит владельца РП.\n\n"
+        "→ Бот запомнит. Если NRP — отметит владельца.\n\n"
         "🔹 **Мировые новости:**\n"
-        "Пиши в чате, сохранённом через `/saveworld`:\n"
+        "В чате `/saveworld`:\n"
         "`#НАТО начал распад (2010)`\n"
-        "→ Бот запомнит как мировую новость.\n"
-        "→ Учтёт при вердиктах.\n\n"
+        "→ Сохранится как мировая. Учтётся в вердиктах.\n\n"
         "🔹 **Вопросы:**\n"
         "`@RPAIBOTIK_BOT, расскажи про Россию`\n"
-        "→ В личке можно писать просто: `расскажи про Россию`\n\n"
+        "→ В личке можно без @.\n\n"
         "🔹 **Вердикты:**\n"
         "`/verdict Ввести санкции против США 2008`\n"
         "→ Оценка, риски, предложения.\n"
         "→ Учитывает прошлые вердикты и мировые новости.\n"
         "→ Игроки: 25/день (30 сек), админы: 100/день (15 сек).\n\n"
-        "🔹 **Информация о стране:**\n"
-        "`/info Россия`\n"
-        "→ Сводка из базы + World Bank.\n"
-        "→ Если в базе нет — ищет в интернете.\n\n"
-        "🔹 **Сохранение чатов:**\n"
-        "`/savechat` — чат фактов.\n"
-        "`/saveworld` — чат мировых новостей.\n"
-        "→ Запоминает всех админов группы.\n\n"
+        "🔹 **Массовый импорт:**\n"
+        "`/bulk` реплаем на большое сообщение — разобьёт на факты.\n"
+        "`/bulkworld` — то же для мировых.\n"
+        "Кулдаун: 3 минуты.\n\n"
+        "🔹 **Инфо о стране:**\n"
+        "`/info Россия` — база → World Bank → интернет.\n\n"
+        "🔹 **Чаты:**\n"
+        "`/savechat` — чат фактов (запоминает админов).\n"
+        "`/saveworld` — чат мировых новостей.\n\n"
         "🔹 **Время РП:**\n"
         "`/year 2010` — установить год.\n"
         "→ 2 реальных часа = 1 месяц РП.\n"
-        "→ 24 реальных часа = 1 год РП.\n"
-        "→ Старт с текущей реальной даты (МСК).\n\n"
+        "→ 24 реальных часа = 1 год РП.\n\n"
         "──────────────────────────────\n"
-        "💡 _Указывай год в (скобках) — бот поймёт._"
+        "💡 _Год в (скобках) — бот поймёт._"
     )
 
 
@@ -169,13 +174,19 @@ def text_tags():
         "╚══════════════════════════════╝",
         ""
     ]
-    for t in tags[:30]:
-        tag_display = t['tag'].replace('world_', '🌍 ')
-        if not t['tag'].startswith("игрок_"):
-            lines.append(f"▪️ **#{tag_display}** — {t['cnt']} фактов ({t['verdicts']} верд.)")
+    world_count = 0
+    for t in tags:
+        if t['tag'].startswith("игрок_"):
+            continue
+        if t['tag'].startswith("world_"):
+            world_count += 1
+            continue
+        lines.append(f"▪️ **#{t['tag']}** — {t['cnt']} фактов ({t['verdicts']} верд.)")
+        if len(lines) > 32:
+            break
     
-    if len(tags) > 30:
-        lines.append(f"\n…и ещё {len(tags) - 30} тегов.")
+    if world_count:
+        lines.append(f"\n🌍 Мировых тегов: **{world_count}**")
     
     lines.append("──────────────────────────────")
     return "\n".join(lines)
@@ -190,16 +201,10 @@ def text_where_save():
         "╚══════════════════════════════╝",
         ""
     ]
-    if facts:
-        lines.append(f"📚 Факты: `{facts}`")
-    else:
-        lines.append("📚 Факты: ❌ не сохранён")
-    if world:
-        lines.append(f"🌍 Мировые: `{world}`")
-    else:
-        lines.append("🌍 Мировые: ❌ не сохранён")
+    lines.append(f"📚 Факты: `{facts}`" if facts else "📚 Факты: ❌ не сохранён")
+    lines.append(f"🌍 Мировые: `{world}`" if world else "🌍 Мировые: ❌ не сохранён")
     lines.append("")
-    lines.append("Сменить: `/savechat` или `/saveworld` в нужном чате.")
+    lines.append("Сменить: `/savechat` или `/saveworld`.")
     return "\n".join(lines)
 
 
@@ -228,7 +233,7 @@ def text_year():
             "║      📅 **ВРЕМЯ РП**         ║\n"
             "╚══════════════════════════════╝\n\n"
             "⚠️ Год РП не установлен.\n\n"
-            "Напиши `/year 2010`, чтобы запустить симуляцию."
+            "Напиши `/year 2010`, чтобы запустить."
         )
 
 
@@ -237,8 +242,9 @@ def text_year():
 # =====================================================================
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.message.from_user.id, update.message.from_user.username):
-        await update.message.reply_text("❌ Команда только для админа/владельца.")
+    chat_id = update.message.chat.id
+    if not is_admin(update.message.from_user.id, update.message.from_user.username, chat_id):
+        await update.message.reply_text("❌ Только для админа/владельца.")
         return
     await update.message.reply_text(
         text_main(),
@@ -252,21 +258,22 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.message.from_user.id, update.message.from_user.username):
+    chat_id = update.message.chat.id
+    if not is_admin(update.message.from_user.id, update.message.from_user.username, chat_id):
         await update.message.reply_text("❌ Только для админа/владельца.")
         return
     await update.message.reply_text(text_stats(), parse_mode="Markdown")
 
 
 async def tags_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.message.from_user.id, update.message.from_user.username):
+    chat_id = update.message.chat.id
+    if not is_admin(update.message.from_user.id, update.message.from_user.username, chat_id):
         await update.message.reply_text("❌ Только для админа/владельца.")
         return
     await update.message.reply_text(text_tags(), parse_mode="Markdown")
 
 
 async def _save_chat_admins(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
-    """Сохраняет всех админов группы (кроме ботов) в настройки."""
     admin_ids = []
     try:
         admins = await context.bot.get_chat_administrators(chat_id)
@@ -281,13 +288,12 @@ async def _save_chat_admins(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def savechat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.message.from_user.id, update.message.from_user.username):
+    chat_id = update.message.chat.id
+    if not is_admin(update.message.from_user.id, update.message.from_user.username, chat_id):
         await update.message.reply_text("❌ Только для админа/владельца.")
         return
     
-    chat_id = update.message.chat.id
     chat_title = update.message.chat.title or "Личка"
-    
     db.set_setting("facts_chat_id", str(chat_id))
     admins = await _save_chat_admins(chat_id, context)
     
@@ -304,13 +310,12 @@ async def savechat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def saveworld_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.message.from_user.id, update.message.from_user.username):
+    chat_id = update.message.chat.id
+    if not is_admin(update.message.from_user.id, update.message.from_user.username, chat_id):
         await update.message.reply_text("❌ Только для админа/владельца.")
         return
     
-    chat_id = update.message.chat.id
     chat_title = update.message.chat.title or "Личка"
-    
     db.set_setting("world_chat_id", str(chat_id))
     
     await update.message.reply_text(
@@ -320,16 +325,16 @@ async def saveworld_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📌 Чат: **{chat_title}**\n"
         f"🆔 ID: `{chat_id}`\n\n"
         "Теперь мировые новости с `#тег` собираются **только здесь**.\n"
-        "Бот будет учитывать их при вердиктах.",
+        "Бот учитывает их при вердиктах.",
         parse_mode="Markdown"
     )
 
 
 async def year_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    import time
     from datetime import datetime
+    chat_id = update.message.chat.id
     
-    if not is_admin(update.message.from_user.id, update.message.from_user.username):
+    if not is_admin(update.message.from_user.id, update.message.from_user.username, chat_id):
         await update.message.reply_text("❌ Только админ/владелец может менять год.")
         return
 
@@ -347,7 +352,6 @@ async def year_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Укажи год числом. Пример: `/year 2010`", parse_mode="Markdown")
         return
 
-    # Стартуем с текущей реальной даты (МСК) — число/месяц возьмём из неё
     try:
         import pytz
         now_msk = datetime.now(pytz.timezone("Europe/Moscow"))
@@ -363,7 +367,7 @@ async def year_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"📅 **Год РП установлен на {year}.**\n\n"
         f"🕐 Старт: сейчас ({now_msk.day} числа, {now_msk.month} месяца, {year} год).\n"
-        f"⚡ Скорость: 1 реальный час = ~15.2 дней РП.\n"
+        f"⚡ 1 реальный час = ~15.2 дней РП.\n"
         f"📅 2 реальных часа = 1 месяц РП.\n"
         f"🎯 24 реальных часа = 1 год РП.\n\n"
         f"Проверить: `/year`",
@@ -372,8 +376,7 @@ async def year_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сводка по стране: база + World Bank + интернет."""
-    from handlers import call_groq, call_gemini, search_web, get_economic_context, get_rp_datetime
+    from handlers import call_groq, call_gemini, search_web, get_economic_context, get_rp_datetime, split_text
     
     args = context.args
     if not args:
@@ -412,7 +415,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not web_result:
             await update.message.reply_text(
                 f"❌ В базе нет данных по стране **{country}**, и поиск в интернете не дал результатов.\n\n"
-                f"Добавь факты через `#{country.lower()} ...`",
+                f"Добавь факты через `#{country_lower} ...`",
                 parse_mode="Markdown"
             )
             return
@@ -441,7 +444,6 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     header = f"🌍 **СВОДКА: {country.upper()}** _(источник: {source})_\n\n"
-    from handlers import split_text
     full = header + result
     for part in split_text(full, max_length=4000):
         try:
@@ -450,8 +452,80 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(part)
 
 
+async def _do_bulk(update: Update, context: ContextTypes.DEFAULT_TYPE, is_world: bool = False):
+    chat_id = update.message.chat.id
+    user_id = update.message.from_user.id
+    username = update.message.from_user.username or ""
+
+    if not is_admin(user_id, username, chat_id):
+        await update.message.reply_text("❌ Только для админа/владельца.")
+        return
+
+    cooldown_key = f"bulk_cooldown_{user_id}"
+    last = db.get_setting(cooldown_key, "0")
+    try:
+        if time.time() - float(last) < 180:
+            await update.message.reply_text("⏳ Подожди 3 минуты между массовыми импортами.")
+            return
+    except Exception:
+        pass
+
+    text = ""
+    if update.message.reply_to_message and update.message.reply_to_message.text:
+        text = update.message.reply_to_message.text
+    else:
+        raw = update.message.text or ""
+        for cmd in ["/bulkworld", "/bulk"]:
+            if raw.startswith(cmd):
+                text = raw[len(cmd):].strip()
+                break
+
+    if not text:
+        await update.message.reply_text(
+            "❌ Использование:\n"
+            "• Ответь (реплай) на сообщение командой `/bulk`\n"
+            "• Или: `/bulk <текст>`\n"
+            "• Для мировых: `/bulkworld`\n\n"
+            "Бот разобьёт текст на факты через LLM.",
+            parse_mode="Markdown"
+        )
+        return
+
+    if len(text) < 50:
+        await update.message.reply_text("❌ Слишком короткий текст (< 50 символов).")
+        return
+
+    await update.message.reply_text(
+        f"⏳ Разбираю текст ({len(text)} символов) на факты...\n"
+        f"Это займёт 10-20 секунд."
+    )
+
+    from handlers import bulk_import
+    saved = await bulk_import(update, text, is_world=is_world)
+
+    if saved == 0:
+        await update.message.reply_text("❌ Не удалось разбить текст. Попробуй переформулировать.")
+    else:
+        kind = "мировых новостей" if is_world else "фактов"
+        db.set_setting(cooldown_key, str(time.time()))
+        await update.message.reply_text(
+            f"✅ **Импортировано {saved} {kind}.**\n"
+            f"Проверь `/tags` или `/stats`.",
+            parse_mode="Markdown"
+        )
+
+
+async def bulk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _do_bulk(update, context, is_world=False)
+
+
+async def bulkworld_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _do_bulk(update, context, is_world=True)
+
+
 async def clear_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.message.from_user.id, update.message.from_user.username):
+    chat_id = update.message.chat.id
+    if not is_admin(update.message.from_user.id, update.message.from_user.username, chat_id):
         await update.message.reply_text("❌ Только для админа/владельца.")
         return
     db.clear_history(update.message.chat.id, update.message.from_user.id)
@@ -459,7 +533,8 @@ async def clear_history_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def clear_facts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.message.from_user.id, update.message.from_user.username):
+    chat_id = update.message.chat.id
+    if not is_admin(update.message.from_user.id, update.message.from_user.username, chat_id):
         await update.message.reply_text("❌ Только для админа/владельца.")
         return
     db.clear_all_facts()
@@ -467,7 +542,7 @@ async def clear_facts_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # =====================================================================
-# ОБРАБОТЧИК ИНЛАЙН-КНОПОК
+# ИНЛАЙН-КНОПКИ
 # =====================================================================
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -476,8 +551,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = query.from_user.id
     username = query.from_user.username or ""
+    chat_id = query.message.chat.id
     
-    if not is_admin(user_id, username):
+    if not is_admin(user_id, username, chat_id):
         await query.edit_message_text("❌ Доступ отозван.")
         return
     
@@ -496,7 +572,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_year":
         await query.edit_message_text(text_year(), reply_markup=back_keyboard(), parse_mode="Markdown")
     elif data == "menu_savechat":
-        chat_id = query.message.chat.id
         chat_title = query.message.chat.title or "Личка"
         db.set_setting("facts_chat_id", str(chat_id))
         admins = await _save_chat_admins(chat_id, context)
@@ -512,7 +587,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     elif data == "menu_saveworld":
-        chat_id = query.message.chat.id
         chat_title = query.message.chat.title or "Личка"
         db.set_setting("world_chat_id", str(chat_id))
         await query.edit_message_text(
@@ -521,12 +595,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "╚══════════════════════════════╝\n\n"
             f"📌 Чат: **{chat_title}**\n"
             f"🆔 ID: `{chat_id}`\n\n"
-            "Мировые новости с `#тег` — только здесь.",
+            "Мировые с `#тег` — только здесь.",
             reply_markup=back_keyboard(),
             parse_mode="Markdown"
         )
     elif data == "menu_clear_history":
-        db.clear_history(query.message.chat.id, user_id)
+        db.clear_history(chat_id, user_id)
         await query.edit_message_text(
             "🧹 *История диалога очищена.*",
             reply_markup=back_keyboard(),
@@ -535,9 +609,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_clear_facts":
         await query.edit_message_text(
             "⚠️ *ВНИМАНИЕ!*\n\n"
-            "Ты собираешься удалить **ВСЕ** факты и вердикты.\n"
-            "Это необратимо.\n\n"
-            "Точно уверен?",
+            "Удалить **ВСЕ** факты и вердикты?\n"
+            "Это необратимо.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Да, удалить", callback_data="menu_clear_facts_confirm")],
                 [InlineKeyboardButton("⬅️ Отмена", callback_data="menu_main")],
@@ -550,4 +623,4 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🗑 *База фактов полностью очищена.*",
             reply_markup=back_keyboard(),
             parse_mode="Markdown"
-        )
+    )
