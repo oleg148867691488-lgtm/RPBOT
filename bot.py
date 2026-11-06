@@ -1,3 +1,4 @@
+
 """
 BOT.PY — ТОЧКА ВХОДА РП-БОТА
 =====================================
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 # =====================================================================
-# FLASK ДЛЯ HEALTH CHECK (чтобы Render не усыплял)
+# FLASK ДЛЯ HEALTH CHECK
 # =====================================================================
 app_web = Flask(__name__)
 
@@ -90,7 +91,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("start", help_command))
 
-    # --- Вердикты ---
+    # --- Вердикты (доступны всем, с лимитами) ---
     app.add_handler(CommandHandler("verdict", verdict_command))
 
     # --- Обычные сообщения (вопросы + #теги) ---
