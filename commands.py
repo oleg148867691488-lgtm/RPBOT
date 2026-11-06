@@ -92,7 +92,8 @@ def text_help():
         "🔹 **Вердикты:**\n"
         "`/verdict Ввести санкции против США 2008`\n"
         "или ответь на сообщение командой `/verdict 2008`\n"
-        "→ Бот выдаст: оценку, риски, предложения.\n\n"
+        "→ Бот выдаст: оценку, риски, предложения.\n"
+        "→ Доступно всем, но с лимитом (5 в день для игроков).\n\n"
         "🔹 **Сохранение чата:**\n"
         "`/savechat` — сделать этот чат хранилищем фактов.\n\n"
         "🔹 **Время РП:**\n"
@@ -310,7 +311,7 @@ async def clear_facts_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await query.answer()  # Обязательно: убирает "крутилку" на кнопке
     
     user_id = query.from_user.id
     username = query.from_user.username or ""
