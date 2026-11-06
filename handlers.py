@@ -1,14 +1,16 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ)
+HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ + ВСЕ ФИЧИ)
 =====================================
-- Симуляция времени: 2 реальных часа = 1 месяц РП, 24 часа = 1 год РП
-- /verdict: 25/день для игроков (30 сек кулдаун), 100/день для админа (15 сек)
-- Учёт прошлых вердиктов (суммирование бюджетов, преемственность)
-- World Bank для точных экономических данных
-- В группах бот отвечает ТОЛЬКО по @упоминанию или реплаю
+- Авто-анализ при #тег (NRP → отметка владельца)
+- Два чата: факты и мировые новости
+- Правильное время: старт с текущей даты РП
+- /verdict: 25/день игрокам (30 сек), 100/день админам (15 сек)
+- Учёт прошлых вердиктов и мировых новостей
 """
 
 import re
+import os
+import json
 import time
 import httpx
 import asyncio
@@ -18,6 +20,7 @@ from telegram.ext import ContextTypes
 
 from config import (
     ADMIN_ID, ADMIN_USERNAME, FACTS_CHAT_ID,
+    RP_OWNER_ID, RP_OWNER_USERNAME,
     GROQ_URL, GROQ_KEY_MAIN, GROQ_KEY_VERDICT, GROQ_KEY_SUMMARY, GROQ_ALL_KEYS,
     MODEL_MAIN, MODEL_VERDICT, MODEL_SUMMARY,
     GEMINI_KEY, GEMINI_URL_TEMPLATE,
@@ -29,12 +32,69 @@ import database as db
 
 
 # =====================================================================
-# СИМУЛЯЦИЯ ВРЕМЕНИ РП (2 ЧАСА = МЕСЯЦ, 24 ЧАСА = ГОД)
+# ПРОВЕРКА ПРАВ
+# =====================================================================
+
+def is_admin(user_id: int, username: str) -> bool:
+    if user_id == ADMIN_ID:
+        return True
+    if RP_OWNER_ID and user_id == RP_OWNER_ID:
+        return True
+    if username and ADMIN_USERNAME and username.lower() == ADMIN_USERNAME.lower():
+        return True
+    saved = db.get_setting("saved_admin_ids")
+    if saved:
+        try:
+            ids = json.loads(saved)
+            if user_id in ids:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def tag_in_text(tag: str, text: str) -> bool:
+    text = text.lower()
+    tag = tag.lower()
+    if tag in text:
+        return True
+    if len(tag) > 3 and tag[:-1] in text:
+        return True
+    if len(tag) > 4 and tag[:-2] in text:
+        return True
+    return False
+
+
+def get_facts_chat_id() -> int:
+    saved = db.get_setting("facts_chat_id")
+    if saved:
+        try:
+            return int(saved)
+        except ValueError:
+            pass
+    return FACTS_CHAT_ID
+
+
+def get_world_chat_id() -> int:
+    saved = db.get_setting("world_chat_id")
+    if saved:
+        try:
+            return int(saved)
+        except ValueError:
+            pass
+    return 0
+
+
+# =====================================================================
+# ВРЕМЯ РП
 # =====================================================================
 
 def get_rp_datetime() -> dict:
     saved_year = db.get_setting("rp_year")
     saved_start = db.get_setting("rp_start_time")
+    saved_month = db.get_setting("rp_start_month", "1")
+    saved_day = db.get_setting("rp_start_day", "1")
+
     empty = {"year": None, "month": None, "day": None, "hour": None,
              "full": None, "elapsed_hours": 0, "rp_days": 0, "real_msk": None,
              "days_to_new_year": None}
@@ -43,6 +103,8 @@ def get_rp_datetime() -> dict:
     try:
         base_year = int(saved_year)
         start_ts = float(saved_start)
+        base_month = int(saved_month)
+        base_day = int(saved_day)
     except (ValueError, TypeError):
         return empty
 
@@ -55,21 +117,18 @@ def get_rp_datetime() -> dict:
         msk_tz = timezone(timedelta(hours=3))
         now_msk = datetime.now(msk_tz)
 
-    start_msk = datetime.fromtimestamp(start_ts, msk_tz)
-
-    elapsed_real_hours = (now_msk - start_msk).total_seconds() / 3600
+    elapsed_real_hours = (now_msk.timestamp() - start_ts) / 3600
     if elapsed_real_hours < 0:
         elapsed_real_hours = 0
 
-    # 365 дней РП за 24 реальных часа → 1 час = 15.208 дня РП
     speed = 365 / 24
     rp_days_total = elapsed_real_hours * speed
 
-    start_date = datetime(base_year, 1, 1)
+    start_date = datetime(base_year, base_month, base_day)
     rp_date = start_date + timedelta(days=rp_days_total)
 
-    days_since_year_start = rp_days_total % 365
-    days_to_new_year = 365 - days_since_year_start
+    next_year_date = datetime(rp_date.year + 1, 1, 1)
+    days_to_new_year = (next_year_date - rp_date).days
 
     return {
         "year": rp_date.year,
@@ -85,7 +144,7 @@ def get_rp_datetime() -> dict:
 
 
 # =====================================================================
-# РАЗБИВКА ДЛИННЫХ СООБЩЕНИЙ
+# РАЗБИВКА ТЕКСТА
 # =====================================================================
 
 def split_text(text: str, max_length: int = 4000) -> list[str]:
@@ -152,24 +211,6 @@ INDICATOR_CODES = {
 }
 
 
-def is_admin(user_id: int, username: str) -> bool:
-    if user_id == ADMIN_ID:
-        return True
-    if username and ADMIN_USERNAME and username.lower() == ADMIN_USERNAME.lower():
-        return True
-    return False
-
-
-def get_facts_chat_id() -> int:
-    saved = db.get_setting("facts_chat_id")
-    if saved:
-        try:
-            return int(saved)
-        except ValueError:
-            pass
-    return FACTS_CHAT_ID
-
-
 async def fetch_world_bank_data(country_code: str, indicator_code: str, year: int = None) -> str | None:
     url = f"{WB_BASE_URL}/country/{country_code}/indicator/{indicator_code}"
     params = {"format": "json", "per_page": 100}
@@ -231,6 +272,10 @@ async def get_economic_context(text: str) -> str | None:
         return f"[ДАННЫЕ WORLD BANK]: {result}"
     return None
 
+
+# =====================================================================
+# LLM
+# =====================================================================
 
 async def call_groq(primary_key: str, model: str, messages: list, temperature: float = 0.3) -> str | None:
     keys_to_try = [primary_key] + [k for k in GROQ_ALL_KEYS if k != primary_key]
@@ -294,6 +339,40 @@ async def search_web(query: str) -> str | None:
         return None
 
 
+# =====================================================================
+# БЫСТРЫЙ АНАЛИЗ ФАКТА (NRP)
+# =====================================================================
+
+async def quick_nrp_check(text: str, year: int = None) -> str | None:
+    text_lower = text.lower()
+    has_money = bool(re.search(r"\d+\s*(млрд|трлн|млн|тыс)", text_lower))
+    has_keywords = any(w in text_lower for w in ["технология", "программа", "проект", "армия", "оружие", "завод", "флот"])
+
+    if not (has_money or has_keywords):
+        return None
+
+    prompt = (
+        f"Проверь факт на NRP (нарушение реализма) для РП 2010-х годов.\n"
+        f"Факт: {text}\n"
+        + (f"Год: {year}\n" if year else "")
+        + "Если факт физически невозможен или анахроничен — ответь ТОЛЬКО: 'NRP: [краткая причина]'.\n"
+        "Если реалистичен — ответь ТОЛЬКО: 'OK'."
+    )
+
+    messages = [
+        {"role": "system", "content": "Ты — строгий Гейм-Мастер. Проверяешь факты на реализм."},
+        {"role": "user", "content": prompt}
+    ]
+    result = await call_groq(GROQ_KEY_MAIN, MODEL_MAIN, messages, temperature=0.1)
+    if result and "NRP" in result.upper():
+        return result.strip()
+    return None
+
+
+# =====================================================================
+# ИСТОРИЯ
+# =====================================================================
+
 async def maybe_summarize_history(chat_id: int, user_id: int):
     count = db.count_active_history(chat_id, user_id)
     if count < HISTORY_SUMMARIZE_THRESHOLD:
@@ -314,20 +393,34 @@ async def maybe_summarize_history(chat_id: int, user_id: int):
     db.add_history(chat_id, user_id, "system", f"[СЖАТАЯ ИСТОРИЯ] {summary}", is_summary=True)
 
 
+# =====================================================================
+# СОХРАНЕНИЕ ФАКТОВ (С АВТОАНАЛИЗОМ)
+# =====================================================================
+
 async def save_fact_from_message(update: Update, text: str) -> bool:
     if not text.startswith("#"):
         return False
     chat_id = update.message.chat.id
     user_id = update.message.from_user.id
     username = update.message.from_user.username or ""
-    allowed_chat = get_facts_chat_id()
-    if chat_id != allowed_chat and not is_admin(user_id, username):
+
+    facts_chat = get_facts_chat_id()
+    world_chat = get_world_chat_id()
+    is_facts = (chat_id == facts_chat)
+    is_world = (chat_id == world_chat)
+
+    if not (is_facts or is_world or is_admin(user_id, username)):
         return False
-    match = re.match(r"^#([\w\-]+)\s+(.+)$", text, re.DOTALL)
+
+    match = re.match(r"^((?:#[\w\-]+\s*)+)(.+)$", text, re.DOTALL)
     if not match:
         return False
-    tag = match.group(1).lower()
+
+    tags = re.findall(r"#([\w\-]+)", match.group(1))
     fact_text = match.group(2).strip()
+    if not tags:
+        return False
+
     year = None
     ym = re.search(r"\((\d{4})\)", fact_text)
     if ym:
@@ -336,10 +429,29 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
         ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", fact_text)
         if ym:
             year = int(ym.group(1))
-    db.add_fact(tag, fact_text, user_id, username, year)
+
+    for tag in tags:
+        save_tag = f"world_{tag.lower()}" if is_world else tag.lower()
+        db.add_fact(save_tag, fact_text, user_id, username, year)
+
     db.add_history(chat_id, user_id, "user", text)
+
+    nrp = await quick_nrp_check(fact_text, year)
+    if nrp:
+        warning = f"🚨 **NRP:** {nrp}"
+        if RP_OWNER_USERNAME:
+            warning += f"\n\n⚠️ @{RP_OWNER_USERNAME}, проверь."
+        await update.message.reply_text(warning, parse_mode="Markdown")
+    else:
+        if update.message.chat.type == "private":
+            await update.message.reply_text("✅ Запомнил.")
+
     return True
 
+
+# =====================================================================
+# ОТВЕТ НА ВОПРОС
+# =====================================================================
 
 async def answer_question(update: Update, text: str) -> str:
     chat_id = update.message.chat.id
@@ -353,9 +465,8 @@ async def answer_question(update: Update, text: str) -> str:
     wb_context = await get_economic_context(text)
     all_tags = db.get_all_tags()
     relevant_facts = []
-    text_lower = text.lower()
     for t in all_tags:
-        if t["tag"] in text_lower:
+        if not t["tag"].startswith("world_") and tag_in_text(t["tag"], text):
             relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
 
     rp = get_rp_datetime()
@@ -393,7 +504,7 @@ async def answer_question(update: Update, text: str) -> str:
 
 
 # =====================================================================
-# ВЕРДИКТ С УЧЁТОМ ПРОШЛЫХ ВЕРДИКТОВ
+# ВЕРДИКТ (С МИРОВЫМИ НОВОСТЯМИ И ПРОШЛЫМИ ВЕРДИКТАМИ)
 # =====================================================================
 
 async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -444,12 +555,13 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     all_tags = db.get_all_tags()
     relevant_facts = []
-    text_lower = text.lower()
+    world_facts = []
     for t in all_tags:
-        if t["tag"] in text_lower:
+        if t["tag"].startswith("world_"):
+            world_facts.extend(db.get_facts_by_tag(t["tag"]))
+        elif tag_in_text(t["tag"], text):
             relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
 
-    # === РАЗДЕЛЯЕМ НА ОБЫЧНЫЕ ФАКТЫ И ПРОШЛЫЕ ВЕРДИКТЫ ===
     regular_facts = []
     previous_verdicts = []
     for f in relevant_facts:
@@ -460,6 +572,7 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     regular_facts = regular_facts[:20]
     previous_verdicts = sorted(previous_verdicts, key=lambda x: x["created_at"], reverse=True)[:10]
+    world_facts = sorted(world_facts, key=lambda x: x["created_at"], reverse=True)[:15]
 
     facts_str = "\n".join([
         f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "")
@@ -471,39 +584,41 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for f in previous_verdicts
     ]) if previous_verdicts else "Прошлых вердиктов нет."
 
+    world_str = "\n".join([
+        f"- [{f['tag'].replace('world_', '')}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "")
+        for f in world_facts
+    ]) if world_facts else "Мировых новостей нет."
+
     wb_context = await get_economic_context(text)
 
     system_prompt = (
         f"Ты — строгий Гейм-Мастер геополитической РП-игры.\n"
         f"{date_context}\n"
         "ТВОЯ ГЛАВНАЯ ЗАДАЧА — проверить заявку на NRP, СВЕРИВ ЕЁ С ФАКТАМИ ИЗ БАЗЫ, "
-        "С ПРОШЛЫМИ ВЕРДИКТАМИ И С РЕАЛЬНОЙ ИСТОРИЕЙ. Только потом — вердикт.\n\n"
+        "С ПРОШЛЫМИ ВЕРДИКТАМИ, С МИРОВЫМИ НОВОСТЯМИ И С РЕАЛЬНОЙ ИСТОРИЕЙ.\n\n"
         "🔍 ПРОВЕРКА NRP:\n"
-        "1. Прочитай ВСЕ факты и все прошлые вердикты ниже.\n"
-        "2. Сверь заявку с фактами и реальной историей:\n"
-        "   • Если игрок пишет «промышленность выросла в 10 раз», а в базе НЕТ заводов, НО в реальности они были — допустимо.\n"
-        "   • Если игрок пишет «армия 5 млн», а в базе НЕТ мобилизации, НО в реальности она была — допустимо.\n"
-        "   • Если игрок пишет «500 кораблей за год», а в базе и реальности не было верфей — NRP.\n"
-        "   • Если игрок пишет «технология X», а её не было в указанный год — NRP.\n"
+        "1. Прочитай ВСЕ факты, все прошлые вердикты и все мировые новости ниже.\n"
+        "2. Сверь заявку с фактами, мировой обстановкой и реальной историей.\n"
         "3. Если NRP — ответь ТОЛЬКО так: '🚨 NRP: [причина]. Согласно базе и реальной истории, [что есть]. Для роста нужны: [какие действия].'\n\n"
         "✅ Если NRP нет — выдай полный вердикт по формату ниже.\n\n"
-        "🧮 УЧЁТ ПРОШЛЫХ ВЕРДИКТОВ (ОБЯЗАТЕЛЬНО!):\n"
-        "- Если в прошлых вердиктах уже выделялся бюджет на похожий проект — СУММИРУЙ его с новым.\n"
-        "  Пример: в прошлом вердикте было 20 млрд на Росатом, сейчас ещё 20 млрд → общий бюджет 40 млрд.\n"
-        "- Если в прошлом вердикте была цель (например, «1 АЭС к 2006-2007»), а новая программа продолжает её — упомяни, что план продолжается.\n"
-        "- Если новый бюджет мал по сравнению с общей суммой — укажи это в оценке.\n"
-        "- В разделе «Итог» обязательно упомяни, как новая программа сочетается с прошлыми вердиктами.\n\n"
+        "🧮 УЧЁТ ПРОШЛЫХ ВЕРДИКТОВ:\n"
+        "- Если в прошлых вердиктах уже выделялся бюджет — СУММИРУЙ его с новым.\n"
+        "- Если прошлый вердикт ставил цель — упомяни, продолжается ли она.\n\n"
+        "🌍 УЧЁТ МИРОВЫХ НОВОСТЕЙ:\n"
+        "- Обязательно учитывай глобальную обстановку (войны, распады, союзы) при оценке рисков.\n\n"
         "ФОРМАТ:\n"
         f"Вердикт: [Название]{year_display}\n\n"
-        "Общая оценка: [Оценка/10] — краткое резюме (с учётом прошлых вердиктов).\n\n"
+        "Общая оценка: [Оценка/10] — краткое резюме.\n\n"
         "1. [Аспект]\nВердикт: [Оценка/10].\n• Плюс: [плюсы]\n• Риск: [риски]\n\n"
         "Итоговый вердикт:\n• [Аспект]: [Оценка/10]\n• Общий итог: [Оценка/10]\n"
-        "• Учёт прошлого: [как это связано с прошлыми вердиктами]\n\n"
+        "• Учёт прошлого: [связь с прошлыми вердиктами]\n"
+        "• Мировая обстановка: [как влияет]\n\n"
         "Рекомендации:\n1. [Рекомендация]\n2. [Рекомендация]\n3. [Рекомендация]\n\n"
-        "ПРАВИЛА:\n1. Только предоставленные факты и прошлые вердикты.\n2. НЕ ВЫДУМЫВАЙ числа.\n3. NRP — только физически невозможное.\n\n"
+        "ПРАВИЛА:\n1. Только предоставленные факты и вердикты.\n2. НЕ ВЫДУМЫВАЙ числа.\n3. NRP — только физически невозможное.\n\n"
         "═══════════════════════════════════════════\n"
         f"📚 ОБЫЧНЫЕ ФАКТЫ ИЗ БАЗЫ:\n{facts_str}\n\n"
-        f"⚖️ ПРОШЛЫЕ ВЕРДИКТЫ (учитывай их обязательно!):\n{verdicts_str}"
+        f"⚖️ ПРОШЛЫЕ ВЕРДИКТЫ:\n{verdicts_str}\n\n"
+        f"🌍 МИРОВЫЕ НОВОСТИ:\n{world_str}"
     )
     if wb_context:
         system_prompt += f"\n\n{wb_context}"
@@ -517,9 +632,12 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Не удалось получить вердикт. Попробуй позже.")
         return
 
+    if "🚨 NRP" in verdict and RP_OWNER_USERNAME:
+        verdict += f"\n\n⚠️ @{RP_OWNER_USERNAME}, проверь на NRP."
+
     save_tag = "вердикт"
     for t in all_tags:
-        if t["tag"] in text_lower:
+        if not t["tag"].startswith("world_") and tag_in_text(t["tag"], text):
             save_tag = t["tag"]
             break
     if not is_adm:
@@ -548,9 +666,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat.id
 
     if text.startswith("#"):
-        saved = await save_fact_from_message(update, text)
-        if saved and update.message.chat.type == "private":
-            await update.message.reply_text("✅ Запомнил.")
+        await save_fact_from_message(update, text)
         return
 
     is_private = update.message.chat.type == "private"
