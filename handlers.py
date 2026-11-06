@@ -1,9 +1,10 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ + ВСЕ ФИЧИ)
+HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ + ФИКС РЕПЛАЯ)
 =====================================
-- Время РП: старт с текущей даты, 2 часа = месяц, 24 часа = год
+- Вердикт по реплаю или команде
+- Время: 2 часа = месяц РП, 24 часа = год РП, старт с текущей реальной даты
 - Авто-NRP при #тег (отметка владельца)
-- Два чата: факты и мировые новости
+- Два чата: факты и мировые
 - Кэш админов группы (автообновление)
 - /bulk — массовый импорт
 - /verdict: 25/день игрокам (30 сек), 100/день админам (15 сек)
@@ -435,7 +436,7 @@ async def maybe_summarize_history(chat_id: int, user_id: int):
 
 
 # =====================================================================
-# СОХРАНЕНИЕ ФАКТОВ (С АВТО-NRP)
+# СОХРАНЕНИЕ ФАКТОВ
 # =====================================================================
 
 async def save_fact_from_message(update: Update, text: str) -> bool:
@@ -491,7 +492,7 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
 
 
 # =====================================================================
-# МАССОВЫЙ ИМПОРТ (/bulk)
+# МАССОВЫЙ ИМПОРТ
 # =====================================================================
 
 async def bulk_import(update: Update, text: str, is_world: bool = False) -> int:
@@ -606,7 +607,7 @@ async def answer_question(update: Update, text: str) -> str:
 
 
 # =====================================================================
-# ВЕРДИКТ
+# ВЕРДИКТ (С РЕПЛАЕМ И ГОДОМ)
 # =====================================================================
 
 async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -629,21 +630,45 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⏳ Дневной лимит вердиктов исчерпан ({daily_limit}/{daily_limit}). Попробуй завтра.")
         return
 
+    # === ПАРСИНГ: реплай или команда ===
     raw = update.message.text or ""
-    text = raw.replace("/verdict", "").strip()
-    if not text and update.message.reply_to_message:
-        text = update.message.reply_to_message.text or ""
-    if not text:
-        await update.message.reply_text("❌ Используй: `/verdict текст ситуации [год]`", parse_mode="Markdown")
+    cmd_text = raw.replace("/verdict", "").strip()
+    reply_text = ""
+    if update.message.reply_to_message and update.message.reply_to_message.text:
+        reply_text = update.message.reply_to_message.text
+
+    year = None
+    if reply_text:
+        # Реплай: ситуация из реплая, год из команды или из конца реплая
+        text = reply_text
+        ym = re.search(r"\b(19\d{2}|20\d{2})\b", cmd_text)
+        if ym:
+            year = int(ym.group(1))
+        if not year:
+            ym2 = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", reply_text)
+            if ym2:
+                year = int(ym2.group(1))
+                text = reply_text[:ym2.start()].strip()
+    else:
+        # Без реплая: ситуация из команды, год из конца
+        text = cmd_text
+        ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", text)
+        if ym:
+            year = int(ym.group(1))
+            text = text[:ym.start()].strip()
+
+    if not text or len(text) < 5:
+        await update.message.reply_text(
+            "❌ Используй один из вариантов:\n"
+            "• `/verdict текст ситуации [год]`\n"
+            "• `/verdict` в ответ на сообщение\n"
+            "• `/verdict 2010` в ответ на сообщение (год отдельно)",
+            parse_mode="Markdown"
+        )
         return
 
     rp = get_rp_datetime()
-    year = None
-    ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", text)
-    if ym:
-        year = int(ym.group(1))
-        text = text[:ym.start()].strip()
-    else:
+    if not year:
         year = rp["year"]
 
     date_context = ""
