@@ -1,11 +1,12 @@
 """
 HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ + ВСЕ ФИЧИ)
 =====================================
-- Авто-анализ при #тег (NRP → отметка владельца)
+- Время РП: старт с текущей даты, 2 часа = месяц, 24 часа = год
+- Авто-NRP при #тег (отметка владельца)
 - Два чата: факты и мировые новости
-- Правильное время: старт с текущей даты РП
+- Кэш админов группы (автообновление)
+- /bulk — массовый импорт
 - /verdict: 25/день игрокам (30 сек), 100/день админам (15 сек)
-- Учёт прошлых вердиктов и мировых новостей
 """
 
 import re
@@ -32,10 +33,48 @@ import database as db
 
 
 # =====================================================================
+# КЭШ АДМИНОВ ГРУПП
+# =====================================================================
+
+def get_chat_admin_ids(chat_id: int) -> list:
+    saved = db.get_setting(f"chat_admins_{chat_id}")
+    if saved:
+        try:
+            return json.loads(saved)
+        except Exception:
+            pass
+    return []
+
+
+def is_chat_admin(chat_id: int, user_id: int) -> bool:
+    return user_id in get_chat_admin_ids(chat_id)
+
+
+async def ensure_chat_admins(chat_id: int, context):
+    if chat_id >= 0:
+        return
+    ts_key = f"chat_admins_ts_{chat_id}"
+    last_ts = db.get_setting(ts_key, "0")
+    try:
+        if time.time() - float(last_ts) < 3600:
+            return
+    except Exception:
+        pass
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+        admin_ids = [a.user.id for a in admins if not a.user.is_bot]
+        db.set_setting(f"chat_admins_{chat_id}", json.dumps(admin_ids))
+        db.set_setting(ts_key, str(time.time()))
+        print(f"✅ Кэш админов {chat_id}: {len(admin_ids)} шт.")
+    except Exception as e:
+        print(f"⚠️ Не удалось получить админов {chat_id}: {e}")
+
+
+# =====================================================================
 # ПРОВЕРКА ПРАВ
 # =====================================================================
 
-def is_admin(user_id: int, username: str) -> bool:
+def is_admin(user_id: int, username: str, chat_id: int = None) -> bool:
     if user_id == ADMIN_ID:
         return True
     if RP_OWNER_ID and user_id == RP_OWNER_ID:
@@ -50,6 +89,8 @@ def is_admin(user_id: int, username: str) -> bool:
                 return True
         except Exception:
             pass
+    if chat_id and is_chat_admin(chat_id, user_id):
+        return True
     return False
 
 
@@ -340,7 +381,7 @@ async def search_web(query: str) -> str | None:
 
 
 # =====================================================================
-# БЫСТРЫЙ АНАЛИЗ ФАКТА (NRP)
+# БЫСТРЫЙ NRP
 # =====================================================================
 
 async def quick_nrp_check(text: str, year: int = None) -> str | None:
@@ -394,7 +435,7 @@ async def maybe_summarize_history(chat_id: int, user_id: int):
 
 
 # =====================================================================
-# СОХРАНЕНИЕ ФАКТОВ (С АВТОАНАЛИЗОМ)
+# СОХРАНЕНИЕ ФАКТОВ (С АВТО-NRP)
 # =====================================================================
 
 async def save_fact_from_message(update: Update, text: str) -> bool:
@@ -407,9 +448,9 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
     facts_chat = get_facts_chat_id()
     world_chat = get_world_chat_id()
     is_facts = (chat_id == facts_chat)
-    is_world = (chat_id == world_chat)
+    is_world = (chat_id == world_chat) and world_chat != 0
 
-    if not (is_facts or is_world or is_admin(user_id, username)):
+    if not (is_facts or is_world or is_admin(user_id, username, chat_id)):
         return False
 
     match = re.match(r"^((?:#[\w\-]+\s*)+)(.+)$", text, re.DOTALL)
@@ -447,6 +488,67 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
             await update.message.reply_text("✅ Запомнил.")
 
     return True
+
+
+# =====================================================================
+# МАССОВЫЙ ИМПОРТ (/bulk)
+# =====================================================================
+
+async def bulk_import(update: Update, text: str, is_world: bool = False) -> int:
+    user_id = update.message.from_user.id
+    username = update.message.from_user.username or ""
+
+    prompt = (
+        f"Разбей следующий текст на отдельные факты для РП-базы знаний.\n"
+        f"Каждый факт — одна строка в формате: #тег факт (год)\n"
+        f"Теги: #страна или #тема (например #россия, #нато, #экономика, #армия).\n"
+        f"Год в скобках в конце, если известен: (2010)\n"
+        f"Можно ставить несколько тегов в начале строки.\n"
+        f"НЕ добавляй ничего от себя. Только список фактов, каждая с новой строки.\n\n"
+        f"ТЕКСТ:\n{text}"
+    )
+
+    messages = [
+        {"role": "system", "content": "Ты — парсер фактов для РП. Разбиваешь текст на отдельные факты с тегами. Отвечаешь только списком фактов."},
+        {"role": "user", "content": prompt}
+    ]
+
+    result = await call_groq(GROQ_KEY_MAIN, MODEL_MAIN, messages, temperature=0.2)
+    if not result:
+        result = await call_gemini(messages, temperature=0.2)
+    if not result:
+        return 0
+
+    saved = 0
+    for line in result.split("\n"):
+        line = line.strip()
+        if not line.startswith("#"):
+            continue
+
+        match = re.match(r"^((?:#[\w\-]+\s*)+)(.+)$", line, re.DOTALL)
+        if not match:
+            continue
+
+        tags = re.findall(r"#([\w\-]+)", match.group(1))
+        fact_text = match.group(2).strip()
+        if not tags or len(fact_text) < 10:
+            continue
+
+        year = None
+        ym = re.search(r"\((\d{4})\)", fact_text)
+        if ym:
+            year = int(ym.group(1))
+        else:
+            ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", fact_text)
+            if ym:
+                year = int(ym.group(1))
+
+        for tag in tags:
+            save_tag = f"world_{tag.lower()}" if is_world else tag.lower()
+            db.add_fact(save_tag, fact_text, user_id, username, year)
+        saved += 1
+
+    return saved
 
 
 # =====================================================================
@@ -504,13 +606,14 @@ async def answer_question(update: Update, text: str) -> str:
 
 
 # =====================================================================
-# ВЕРДИКТ (С МИРОВЫМИ НОВОСТЯМИ И ПРОШЛЫМИ ВЕРДИКТАМИ)
+# ВЕРДИКТ
 # =====================================================================
 
 async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     username = update.message.from_user.username or ""
-    is_adm = is_admin(user_id, username)
+    chat_id = update.message.chat.id
+    is_adm = is_admin(user_id, username, chat_id)
 
     cooldown = 15.0 if is_adm else 30.0
     if not db.check_cooldown(user_id, cooldown, is_verdict=True):
