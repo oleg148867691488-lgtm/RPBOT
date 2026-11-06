@@ -47,7 +47,7 @@ TURSO_AUTH_TOKEN   = os.getenv("TURSO_KEY")
 
 # === НАСТРОЙКИ ПОВЕДЕНИЯ ===
 COOLDOWN_DIALOG    = 3.0    # сек между обычными сообщениями
-COOLDOWN_VERDICT   = 15.0   # сек между вердиктами (для админа, для игроков 30 сек в handlers)
+COOLDOWN_VERDICT   = 15.0   # сек между вердиктами (для админа; для игроков 30 сек в handlers)
 HISTORY_CONTEXT_LIMIT        = 15   # сколько последних сообщений идёт в промпт
 HISTORY_SUMMARIZE_THRESHOLD  = 30   # при скольких сообщениях запускать сжатие
 HISTORY_SUMMARIZE_BATCH      = 20   # сколько старых сообщений сжимать за раз
