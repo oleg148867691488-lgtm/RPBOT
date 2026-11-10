@@ -1,11 +1,13 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ + ТЕМЫ)
+HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ + ВСЕ ФИКСЫ)
 =====================================
+- Fallback моделей: gpt-oss-120b → qwen3.8-27b → Gemini
+- Обрезка текста до 4000 символов (обход TPM-лимита)
+- Хештеги вырезаются из текста для LLM, но ищутся в базе
 - Поддержка тем (thread_id) в супергруппах
 - Время: 2 часа = месяц РП, 24 часа = год РП
 - Авто-NRP при #тег (отметка владельца)
 - Вердикты по реплаю и команде
-- Цепочка ответа: база → World Bank → интернет → знания
 """
 
 import re
@@ -344,18 +346,20 @@ async def call_groq(primary_key: str, model: str, messages: list, temperature: f
         try:
             data = {"model": model, "temperature": temperature, "messages": messages}
             headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(GROQ_URL, headers=headers, json=data)
                 if resp.status_code == 200:
                     return resp.json()["choices"][0]["message"]["content"]
-                print(f"⚠️ Groq ключ #{i+1} ({model}): {resp.status_code}")
+                # Логируем полный ответ для диагностики
+                print(f"⚠️ Groq #{i+1} ({model}) status={resp.status_code}: {resp.text[:300]}")
         except Exception as e:
-            print(f"⚠️ Groq ошибка #{i+1}: {str(e)[:80]}")
+            print(f"⚠️ Groq #{i+1} exception: {str(e)[:200]}")
     return None
 
 
 async def call_gemini(messages: list, temperature: float = 0.3) -> str | None:
     if not GEMINI_KEY:
+        print("⚠️ Gemini: GEMINI_KEY не задан")
         return None
     system_prompt = ""
     contents = []
@@ -370,13 +374,13 @@ async def call_gemini(messages: list, temperature: float = 0.3) -> str | None:
         payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
     try:
         url = GEMINI_URL_TEMPLATE.format(key=GEMINI_KEY)
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code == 200:
                 return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            print(f"⚠️ Gemini: {resp.status_code}")
+            print(f"⚠️ Gemini status={resp.status_code}: {resp.text[:300]}")
     except Exception as e:
-        print(f"⚠️ Gemini ошибка: {str(e)[:80]}")
+        print(f"⚠️ Gemini exception: {str(e)[:200]}")
     return None
 
 
@@ -476,7 +480,6 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
     world_thread = get_world_thread_id()
 
     is_facts = (chat_id == facts_chat) and (thread_id == facts_thread)
-    # Приоритет у фактов: если тема уже факты — она НЕ считается мировыми
     is_world = (chat_id == world_chat) and (thread_id == world_thread) and not is_facts
 
     if not (is_facts or is_world or is_admin(user_id, username, chat_id)):
@@ -581,7 +584,7 @@ async def bulk_import(update: Update, text: str, is_world: bool = False) -> int:
 
 
 # =====================================================================
-# ОТВЕТ НА ВОПРОС (БАЗА → WB → ИНТЕРНЕТ → ЗНАНИЯ)
+# ОТВЕТ НА ВОПРОС
 # =====================================================================
 
 async def answer_question(update: Update, text: str) -> str:
@@ -593,15 +596,16 @@ async def answer_question(update: Update, text: str) -> str:
     await maybe_summarize_history(chat_id, user_id)
     history = db.get_history(chat_id, user_id, limit=HISTORY_CONTEXT_LIMIT)
 
-    # ШАГ 1: факты из базы
+    # Обрезаем текст до 4000
+    short_text = text[:4000] if len(text) > 4000 else text
+
     all_tags = db.get_all_tags()
     relevant_facts = []
     for t in all_tags:
-        if not t["tag"].startswith("world_") and tag_in_text(t["tag"], text):
+        if not t["tag"].startswith("world_") and tag_in_text(t["tag"], short_text):
             relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
 
-    # ШАГ 2: World Bank
-    wb_context = await get_economic_context(text)
+    wb_context = await get_economic_context(short_text)
 
     rp = get_rp_datetime()
     date_line = f"Сейчас в РП: {rp['day']} числа, {rp['month']} месяца, {rp['hour']}:00, {rp['year']} год. " if rp["year"] else ""
@@ -610,48 +614,31 @@ async def answer_question(update: Update, text: str) -> str:
         f"Ты — аналитический РП-бот. {date_line}Отвечай кратко, по делу, только на русском.",
     ]
 
-    # ШАГ 3: приоритет источников
     if relevant_facts:
         facts_str = "\n".join([
             f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "")
-            for f in relevant_facts[:20]
+            for f in relevant_facts[:10]
         ])
         system_parts.append(f"ФАКТЫ ИЗ БАЗЫ (используй ТОЛЬКО их):\n{facts_str}")
         if wb_context:
             system_parts.append(f"\nДОПОЛНИТЕЛЬНО (World Bank):\n{wb_context}")
-        system_parts.append(
-            "\n⚠️ Отвечай ТОЛЬКО на основе фактов из базы. "
-            "Если чего-то нет — скажи 'нет данных по этому пункту'. "
-            "НЕ выдумывай и НЕ используй свои знания."
-        )
+        system_parts.append("\n⚠️ Отвечай ТОЛЬКО на основе фактов. Если чего-то нет — скажи 'нет данных'.")
 
     elif wb_context:
-        system_parts.append(
-            f"В базе нет фактов, но есть данные World Bank:\n{wb_context}\n\n"
-            f"Используй их и укажи источник как 'World Bank'."
-        )
+        system_parts.append(f"В базе нет фактов, но есть World Bank:\n{wb_context}")
 
     else:
-        search_result = await search_web(text)
+        search_result = await search_web(short_text)
         if search_result:
-            system_parts.append(
-                f"В базе нет фактов, использован поиск в интернете.\n"
-                f"РЕЗУЛЬТАТЫ ПОИСКА:\n{search_result}\n\n"
-                f"Ответь на основе этих результатов. Пометь ответ как '(из интернета)'."
-            )
+            system_parts.append(f"РЕЗУЛЬТАТЫ ПОИСКА:\n{search_result}\n\nПометь ответ как '(из интернета)'.")
         else:
-            system_parts.append(
-                "В базе нет фактов, поиск в интернете не дал результатов.\n"
-                "Ответь на основе общих знаний (до 2020 года). "
-                "ОБЯЗАТЕЛЬНО пометь ответ как '(общие данные, не из базы)'. "
-                "НЕ используй знания о событиях 2024–2026 годов."
-            )
+            system_parts.append("Ответь на основе общих знаний (до 2020). Пометь '(общие данные, не из базы)'.")
 
     system_prompt = "\n".join(system_parts)
     messages = [{"role": "system", "content": system_prompt}]
     for h in history[:-1]:
         messages.append({"role": h["role"], "content": h["content"]})
-    messages.append({"role": "user", "content": text})
+    messages.append({"role": "user", "content": short_text})
 
     answer = await call_groq(GROQ_KEY_MAIN, MODEL_MAIN, messages, temperature=0.5)
     if not answer:
@@ -663,7 +650,7 @@ async def answer_question(update: Update, text: str) -> str:
 
 
 # =====================================================================
-# ВЕРДИКТ (РЕПЛАЙ / КОМАНДА / ГОД)
+# ВЕРДИКТ (С ФИКСАМИ: FALLBACK МОДЕЛЕЙ, ОБРЕЗКА, ХЕШТЕГИ)
 # =====================================================================
 
 async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -688,9 +675,20 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     raw = update.message.text or ""
     cmd_text = raw.replace("/verdict", "").strip()
+    # Убираем упоминание бота из команды
+    cmd_text = re.sub(r"@\w+", "", cmd_text).strip()
+
     reply_text = ""
     if update.message.reply_to_message and update.message.reply_to_message.text:
         reply_text = update.message.reply_to_message.text
+
+    # === ФИКС: хештеги вырезаем из текста, но запоминаем ===
+    hashtag_source = reply_text if reply_text else cmd_text
+    extracted_hashtags = [h.lower() for h in re.findall(r"#([\w\-]+)", hashtag_source)]
+
+    cmd_text = re.sub(r"#[\w\-]+", "", cmd_text).strip()
+    if reply_text:
+        reply_text = re.sub(r"#[\w\-]+", "", reply_text).strip()
 
     year = None
     if reply_text:
@@ -720,6 +718,10 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # === ФИКС: обрезаем текст до 4000 символов ===
+    if len(text) > 4000:
+        text = text[:4000] + "... [текст обрезан]"
+
     rp = get_rp_datetime()
     if not year:
         year = rp["year"]
@@ -737,10 +739,11 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     all_tags = db.get_all_tags()
     relevant_facts = []
     world_facts = []
+    # Ищем по вырезанным хештегам + по вхождению в текст
     for t in all_tags:
         if t["tag"].startswith("world_"):
             world_facts.extend(db.get_facts_by_tag(t["tag"]))
-        elif tag_in_text(t["tag"], text):
+        elif t["tag"] in extracted_hashtags or tag_in_text(t["tag"], text):
             relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
 
     regular_facts = []
@@ -751,9 +754,9 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             regular_facts.append(f)
 
-    regular_facts = regular_facts[:20]
-    previous_verdicts = sorted(previous_verdicts, key=lambda x: x["created_at"], reverse=True)[:10]
-    world_facts = sorted(world_facts, key=lambda x: x["created_at"], reverse=True)[:15]
+    regular_facts = regular_facts[:10]  # Фикс: 10 вместо 20
+    previous_verdicts = sorted(previous_verdicts, key=lambda x: x["created_at"], reverse=True)[:5]  # Фикс: 5 вместо 10
+    world_facts = sorted(world_facts, key=lambda x: x["created_at"], reverse=True)[:10]  # Фикс: 10 вместо 15
 
     facts_str = "\n".join([
         f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "")
@@ -785,25 +788,25 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "   • Нереалистичные числа (500 млн танков, 1 млрд солдат)\n"
         "   • Мгновенное строительство (за день построил 100 заводов)\n"
         "   • Анахронизмы (технология, которой не было в указанный год)\n"
-        "4. ПОЛИТИЧЕСКИЕ РЕШЕНИЯ (передача командования, объединение стран, союзы, реформы) — это НЕ NRP. Это нормальный ход РП. Оценивай их с точки зрения рисков и последствий, но НЕ отклоняй как NRP.\n"
-        "5. Если NRP — ответь ТОЛЬКО так: '🚨 NRP: [причина]. Согласно базе и реальной истории, [что есть]. Для роста нужны: [какие действия].'\n\n"
+        "4. ПОЛИТИЧЕСКИЕ РЕШЕНИЯ (передача командования, объединение стран, союзы, реформы) — это НЕ NRP.\n"
+        "5. Если NRP — ответь ТОЛЬКО так: '🚨 NRP: [причина].'\n\n"
         "✅ Если NRP нет — выдай полный вердикт по формату ниже.\n\n"
         "🧮 УЧЁТ ПРОШЛЫХ ВЕРДИКТОВ:\n"
         "- Если в прошлых вердиктах уже выделялся бюджет — СУММИРУЙ его с новым.\n"
         "- Если прошлый вердикт ставил цель — упомяни, продолжается ли она.\n\n"
         "🌍 УЧЁТ МИРОВЫХ НОВОСТЕЙ:\n"
-        "- Обязательно учитывай глобальную обстановку (войны, распады, союзы) при оценке рисков.\n\n"
+        "- Учитывай глобальную обстановку при оценке рисков.\n\n"
         "ФОРМАТ:\n"
         f"Вердикт: [Название]{year_display}\n\n"
         "Общая оценка: [Оценка/10] — краткое резюме.\n\n"
         "1. [Аспект]\nВердикт: [Оценка/10].\n• Плюс: [плюсы]\n• Риск: [риски]\n\n"
         "Итоговый вердикт:\n• [Аспект]: [Оценка/10]\n• Общий итог: [Оценка/10]\n"
-        "• Учёт прошлого: [связь с прошлыми вердиктами]\n"
+        "• Учёт прошлого: [связь]\n"
         "• Мировая обстановка: [как влияет]\n\n"
         "Рекомендации:\n1. [Рекомендация]\n2. [Рекомендация]\n3. [Рекомендация]\n\n"
-        "ПРАВИЛА:\n1. Только предоставленные факты и вердикты.\n2. НЕ ВЫДУМЫВАЙ числа.\n3. NRP — только физически невозможное.\n\n"
+        "ПРАВИЛА:\n1. Только предоставленные факты.\n2. НЕ ВЫДУМЫВАЙ числа.\n3. NRP — только физически невозможное.\n\n"
         "═══════════════════════════════════════════\n"
-        f"📚 ОБЫЧНЫЕ ФАКТЫ ИЗ БАЗЫ:\n{facts_str}\n\n"
+        f"📚 ОБЫЧНЫЕ ФАКТЫ:\n{facts_str}\n\n"
         f"⚖️ ПРОШЛЫЕ ВЕРДИКТЫ:\n{verdicts_str}\n\n"
         f"🌍 МИРОВЫЕ НОВОСТИ:\n{world_str}"
     )
@@ -812,11 +815,26 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Ситуация: {text}"}]
 
-    verdict = await call_groq(GROQ_KEY_VERDICT, MODEL_VERDICT, messages, temperature=0.6)
+    # === FALLBACK МОДЕЛЕЙ (только живые) ===
+    VERDICT_MODELS = [
+        "openai/gpt-oss-120b",
+        "qwen/qwen3.8-27b",
+    ]
+
+    verdict = None
+    for model_name in VERDICT_MODELS:
+        print(f"🔄 Пробую модель: {model_name}")
+        verdict = await call_groq(GROQ_KEY_VERDICT, model_name, messages, temperature=0.6)
+        if verdict:
+            print(f"✅ Модель {model_name} ответила")
+            break
+
     if not verdict:
+        print("⚠️ Все модели Groq упали, пробую Gemini")
         verdict = await call_gemini(messages, temperature=0.6)
+
     if not verdict:
-        await update.message.reply_text("❌ Не удалось получить вердикт. Попробуй позже.")
+        await update.message.reply_text("❌ Не удалось получить вердикт. Все модели недоступны. Попробуй позже.")
         return
 
     if "🚨 NRP" in verdict and RP_OWNER_USERNAME:
@@ -833,6 +851,10 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fact_text = f"[ВЕРДИКТ] {text[:300]} → {verdict[:400]}"
     db.add_fact(save_tag, fact_text, user_id, username, year, is_verdict=True)
     db.set_setting(limit_key, str(used_today + 1))
+
+    # === ФИКС: обрезаем вердикт до 10000 символов ===
+    if len(verdict) > 10000:
+        verdict = verdict[:10000] + "\n\n…[вердикт обрезан]"
 
     parts = split_text(verdict, max_length=4000)
     for part in parts:
