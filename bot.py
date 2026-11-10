@@ -2,6 +2,7 @@
 BOT.PY — ТОЧКА ВХОДА РП-БОТА
 =====================================
 Запуск бота + Flask для health check на Render.
+Регистрация всех команд + автоматическое обновление кэша админов групп.
 """
 
 import logging
@@ -12,15 +13,15 @@ from flask import Flask
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, filters, ContextTypes
+    CallbackQueryHandler, TypeHandler, filters, ContextTypes
 )
 
 from config import BOT_TOKEN
-from handlers import handle_message, verdict_command
+from handlers import handle_message, verdict_command, ensure_chat_admins
 from commands import (
     menu_command, help_command, stats_command, tags_command,
     savechat_command, saveworld_command, year_command,
-    info_command,
+    info_command, top_command, bulk_command, bulkworld_command,
     clear_history_command, clear_facts_command,
     menu_callback,
 )
@@ -62,6 +63,15 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 # =====================================================================
+# ГЛОБАЛЬНЫЙ ОБНОВИТЕЛЬ КЭША АДМИНОВ
+# =====================================================================
+async def update_admins_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """При любом апдейте в группе — проверяет/обновляет кэш админов."""
+    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+        await ensure_chat_admins(update.effective_chat.id, context)
+
+
+# =====================================================================
 # ЗАПУСК
 # =====================================================================
 def main():
@@ -78,6 +88,9 @@ def main():
     # Telegram-бот
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # === ГЛОБАЛЬНЫЙ ОБНОВИТЕЛЬ АДМИНОВ (group=-1, до всех остальных) ===
+    app.add_handler(TypeHandler(Update, update_admins_handler), group=-1)
+
     # --- Админские / владельческие команды ---
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("savechat", savechat_command))
@@ -88,10 +101,15 @@ def main():
     app.add_handler(CommandHandler("clear_history", clear_history_command))
     app.add_handler(CommandHandler("clear_facts", clear_facts_command))
 
+    # --- Массовый импорт (админ/владелец) ---
+    app.add_handler(CommandHandler("bulk", bulk_command))
+    app.add_handler(CommandHandler("bulkworld", bulkworld_command))
+
     # --- Публичные ---
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("start", help_command))
     app.add_handler(CommandHandler("info", info_command))
+    app.add_handler(CommandHandler("top", top_command))
 
     # --- Вердикты (для всех, с лимитами) ---
     app.add_handler(CommandHandler("verdict", verdict_command))
