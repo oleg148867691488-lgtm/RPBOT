@@ -1,13 +1,13 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ + ФИКС РЕПЛАЯ)
+HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ)
 =====================================
-- Вердикт по реплаю или команде
-- Время: 2 часа = месяц РП, 24 часа = год РП, старт с текущей реальной даты
+- Время: 2 часа = месяц РП, 24 часа = год РП
 - Авто-NRP при #тег (отметка владельца)
-- Два чата: факты и мировые
-- Кэш админов группы (автообновление)
+- Два чата: факты и мировые (приоритет у фактов)
+- Кэш админов групп
 - /bulk — массовый импорт
 - /verdict: 25/день игрокам (30 сек), 100/день админам (15 сек)
+- Ответ: база → World Bank → интернет → общие знания
 """
 
 import re
@@ -397,7 +397,12 @@ async def quick_nrp_check(text: str, year: int = None) -> str | None:
         f"Проверь факт на NRP (нарушение реализма) для РП 2010-х годов.\n"
         f"Факт: {text}\n"
         + (f"Год: {year}\n" if year else "")
-        + "Если факт физически невозможен или анахроничен — ответь ТОЛЬКО: 'NRP: [краткая причина]'.\n"
+        + "NRP — это ТОЛЬКО физическая невозможность:\n"
+        "- Технологии будущего (телепортация, варп-двигатели, лазерные винтовки 12 кг)\n"
+        "- Нереалистичные числа (500 млн танков, 1 млрд солдат)\n"
+        "- Мгновенное строительство (за день построил 100 заводов)\n"
+        "ПОЛИТИЧЕСКИЕ РЕШЕНИЯ (кто кому что передал, кто с кем объединился) — это НЕ NRP. Это РП.\n"
+        "Если факт физически невозможен — ответь ТОЛЬКО: 'NRP: [краткая причина]'.\n"
         "Если реалистичен — ответь ТОЛЬКО: 'OK'."
     )
 
@@ -436,7 +441,7 @@ async def maybe_summarize_history(chat_id: int, user_id: int):
 
 
 # =====================================================================
-# СОХРАНЕНИЕ ФАКТОВ
+# СОХРАНЕНИЕ ФАКТОВ (ПРИОРИТЕТ У ФАКТОВ)
 # =====================================================================
 
 async def save_fact_from_message(update: Update, text: str) -> bool:
@@ -449,7 +454,8 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
     facts_chat = get_facts_chat_id()
     world_chat = get_world_chat_id()
     is_facts = (chat_id == facts_chat)
-    is_world = (chat_id == world_chat) and world_chat != 0
+    # Приоритет у фактов: если чат уже сохранён как факты, он НЕ считается мировым
+    is_world = (chat_id == world_chat) and world_chat != 0 and not is_facts
 
     if not (is_facts or is_world or is_admin(user_id, username, chat_id)):
         return False
@@ -553,7 +559,7 @@ async def bulk_import(update: Update, text: str, is_world: bool = False) -> int:
 
 
 # =====================================================================
-# ОТВЕТ НА ВОПРОС
+# ОТВЕТ НА ВОПРОС (БАЗА → WB → ИНТЕРНЕТ → ОБЩИЕ ЗНАНИЯ)
 # =====================================================================
 
 async def answer_question(update: Update, text: str) -> str:
@@ -565,31 +571,63 @@ async def answer_question(update: Update, text: str) -> str:
     await maybe_summarize_history(chat_id, user_id)
     history = db.get_history(chat_id, user_id, limit=HISTORY_CONTEXT_LIMIT)
 
-    wb_context = await get_economic_context(text)
+    # ШАГ 1: факты из базы
     all_tags = db.get_all_tags()
     relevant_facts = []
     for t in all_tags:
         if not t["tag"].startswith("world_") and tag_in_text(t["tag"], text):
             relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
 
+    # ШАГ 2: World Bank
+    wb_context = await get_economic_context(text)
+
     rp = get_rp_datetime()
     date_line = f"Сейчас в РП: {rp['day']} числа, {rp['month']} месяца, {rp['hour']}:00, {rp['year']} год. " if rp["year"] else ""
 
     system_parts = [
         f"Ты — аналитический РП-бот. {date_line}Отвечай кратко, по делу, только на русском.",
-        "ПРИОРИТЕТ 1: Если есть ФАКТЫ ИЗ БАЗЫ — используй их.",
-        "ПРИОРИТЕТ 2: Если в базе нет факта, но он есть в РЕАЛЬНОЙ ИСТОРИИ до 2020 года — используй его.",
-        "ПРИОРИТЕТ 3: Если есть ДАННЫЕ WORLD BANK — используй их для точных цифр.",
-        "🚨 КРИТИЧЕСКОЕ ПРАВИЛО: НЕ используй знания о событиях 2024–2026 годов. Если фактов в базе нет и в реальной истории до 2020 их тоже нет — скажи 'В базе знаний нет данных по этой теме. Добавь факты через #тег'.",
     ]
 
+    # ШАГ 3: приоритет источников
     if relevant_facts:
-        facts_str = "\n".join([f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "") for f in relevant_facts[:20]])
-        system_parts.append(f"\nФАКТЫ ИЗ БАЗЫ:\n{facts_str}")
-    if wb_context:
-        system_parts.append(f"\n{wb_context}")
-    if not relevant_facts and not wb_context:
-        system_parts.append("\nВ базе нет фактов. НЕ используй знания о 2024–2026. Скажи: 'В базе знаний нет данных. Добавь факты через #тег'.")
+        # Есть факты — используем ТОЛЬКО их
+        facts_str = "\n".join([
+            f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "")
+            for f in relevant_facts[:20]
+        ])
+        system_parts.append(f"ФАКТЫ ИЗ БАЗЫ (используй ТОЛЬКО их):\n{facts_str}")
+        if wb_context:
+            system_parts.append(f"\nДОПОЛНИТЕЛЬНО (World Bank):\n{wb_context}")
+        system_parts.append(
+            "\n⚠️ Отвечай ТОЛЬКО на основе фактов из базы. "
+            "Если чего-то нет — скажи 'нет данных по этому пункту'. "
+            "НЕ выдумывай и НЕ используй свои знания."
+        )
+
+    elif wb_context:
+        # Фактов нет, но есть World Bank
+        system_parts.append(
+            f"В базе нет фактов, но есть данные World Bank:\n{wb_context}\n\n"
+            f"Используй их и укажи источник как 'World Bank'."
+        )
+
+    else:
+        # ШАГ 4: идём в интернет
+        search_result = await search_web(text)
+        if search_result:
+            system_parts.append(
+                f"В базе нет фактов, использован поиск в интернете.\n"
+                f"РЕЗУЛЬТАТЫ ПОИСКА:\n{search_result}\n\n"
+                f"Ответь на основе этих результатов. Пометь ответ как '(из интернета)'."
+            )
+        else:
+            # ШАГ 5: общие знания LLM
+            system_parts.append(
+                "В базе нет фактов, поиск в интернете не дал результатов.\n"
+                "Ответь на основе общих знаний (до 2020 года). "
+                "ОБЯЗАТЕЛЬНО пометь ответ как '(общие данные, не из базы)'. "
+                "НЕ используй знания о событиях 2024–2026 годов."
+            )
 
     system_prompt = "\n".join(system_parts)
     messages = [{"role": "system", "content": system_prompt}]
@@ -607,7 +645,7 @@ async def answer_question(update: Update, text: str) -> str:
 
 
 # =====================================================================
-# ВЕРДИКТ (С РЕПЛАЕМ И ГОДОМ)
+# ВЕРДИКТ (РЕПЛАЙ / КОМАНДА / ГОД)
 # =====================================================================
 
 async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -639,7 +677,6 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     year = None
     if reply_text:
-        # Реплай: ситуация из реплая, год из команды или из конца реплая
         text = reply_text
         ym = re.search(r"\b(19\d{2}|20\d{2})\b", cmd_text)
         if ym:
@@ -650,7 +687,6 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 year = int(ym2.group(1))
                 text = reply_text[:ym2.start()].strip()
     else:
-        # Без реплая: ситуация из команды, год из конца
         text = cmd_text
         ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", text)
         if ym:
@@ -662,7 +698,7 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Используй один из вариантов:\n"
             "• `/verdict текст ситуации [год]`\n"
             "• `/verdict` в ответ на сообщение\n"
-            "• `/verdict 2010` в ответ на сообщение (год отдельно)",
+            "• `/verdict 2010` в ответ на сообщение",
             parse_mode="Markdown"
         )
         return
@@ -727,7 +763,13 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔍 ПРОВЕРКА NRP:\n"
         "1. Прочитай ВСЕ факты, все прошлые вердикты и все мировые новости ниже.\n"
         "2. Сверь заявку с фактами, мировой обстановкой и реальной историей.\n"
-        "3. Если NRP — ответь ТОЛЬКО так: '🚨 NRP: [причина]. Согласно базе и реальной истории, [что есть]. Для роста нужны: [какие действия].'\n\n"
+        "3. NRP — это ТОЛЬКО физическая невозможность:\n"
+        "   • Технологии будущего (телепортация, варп-двигатели, лазерные винтовки 12 кг)\n"
+        "   • Нереалистичные числа (500 млн танков, 1 млрд солдат)\n"
+        "   • Мгновенное строительство (за день построил 100 заводов)\n"
+        "   • Анахронизмы (технология, которой не было в указанный год)\n"
+        "4. ПОЛИТИЧЕСКИЕ РЕШЕНИЯ (передача командования, объединение стран, союзы, реформы) — это НЕ NRP. Это нормальный ход РП. Оценивай их с точки зрения рисков и последствий, но НЕ отклоняй как NRP.\n"
+        "5. Если NRP — ответь ТОЛЬКО так: '🚨 NRP: [причина]. Согласно базе и реальной истории, [что есть]. Для роста нужны: [какие действия].'\n\n"
         "✅ Если NRP нет — выдай полный вердикт по формату ниже.\n\n"
         "🧮 УЧЁТ ПРОШЛЫХ ВЕРДИКТОВ:\n"
         "- Если в прошлых вердиктах уже выделялся бюджет — СУММИРУЙ его с новым.\n"
