@@ -1,422 +1,121 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ + ВСЕ ФИКСЫ)
-=====================================
-- Fallback моделей: gpt-oss-120b → qwen3.8-27b → Gemini
-- Обрезка текста до 4000 символов (обход TPM-лимита)
-- Хештеги вырезаются из текста для LLM, но ищутся в базе
-- Поддержка тем (thread_id) в супергруппах
-- Время: 2 часа = месяц РП, 24 часа = год РП
-- Авто-NRP при #тег (отметка владельца)
-- Вердикты по реплаю и команде
+HANDLERS.PY — логика РП-бота: факты (#теги), вопросы, вердикты, массовый импорт.
+
+Смысл тот же, что и раньше, но:
+- БД и сеть не блокируют бота; запросы к БД, истории и World Bank идут параллельно.
+- В промпт попадают самые НОВЫЕ факты (раньше обрезались как раз новые).
+- Теги ищутся по целым словам, а не по подстроке.
+- Ответы нейросети безопасно форматируются (больше никаких падений из-за _ и *).
+- Нет дублирования вопроса при сжатии истории; сжатие идёт в фоне, после ответа.
+- NRP-проверка не срабатывает на «OK, это не NRP».
 """
 
-import re
-import os
-import json
-import time
-import httpx
 import asyncio
-from datetime import datetime, timedelta
+import logging
+import re
+from datetime import datetime, timezone
+
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import (
-    ADMIN_ID, ADMIN_USERNAME, FACTS_CHAT_ID,
-    RP_OWNER_ID, RP_OWNER_USERNAME,
-    GROQ_URL, GROQ_KEY_MAIN, GROQ_KEY_VERDICT, GROQ_KEY_SUMMARY, GROQ_ALL_KEYS,
-    MODEL_MAIN, MODEL_VERDICT, MODEL_SUMMARY,
-    GEMINI_KEY, GEMINI_URL_TEMPLATE,
-    OLLAMA_KEY, OLLAMA_URL,
-    COOLDOWN_DIALOG, COOLDOWN_VERDICT,
-    HISTORY_CONTEXT_LIMIT, HISTORY_SUMMARIZE_THRESHOLD, HISTORY_SUMMARIZE_BATCH,
-)
+import config as C
 import database as db
+from auth import is_staff
+from llm import ask, search_web
+from rptime import get_rp_datetime
+from textutils import (
+    Cooldown, esc, match_tags, parse_fact_line, shorten,
+)
+from tg import reply_llm, safe_reply, send_typing, thread_id_of
+from worldbank import get_economic_context
+
+log = logging.getLogger(__name__)
+
+_dialog_cd = Cooldown()
+_verdict_cd = Cooldown()
+_busy_verdict: set = set()
+_summarizing: set = set()
+_bg_tasks: set = set()
+
+_SKIP_TAG_PREFIXES = ("world_", "игрок_")
 
 
 # =====================================================================
-# КЭШ АДМИНОВ ГРУПП
+# ВСПОМОГАТЕЛЬНОЕ
 # =====================================================================
 
-def get_chat_admin_ids(chat_id: int) -> list:
-    saved = db.get_setting(f"chat_admins_{chat_id}")
-    if saved:
-        try:
-            return json.loads(saved)
-        except Exception:
-            pass
-    return []
+def spawn(coro):
+    """Фоновая задача с сохранением ссылки (иначе её может собрать сборщик мусора)."""
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+
+    def _done(t):
+        _bg_tasks.discard(t)
+        if not t.cancelled() and t.exception():
+            log.error("Фоновая задача упала", exc_info=t.exception())
+
+    task.add_done_callback(_done)
+    return task
 
 
-def is_chat_admin(chat_id: int, user_id: int) -> bool:
-    return user_id in get_chat_admin_ids(chat_id)
-
-
-async def ensure_chat_admins(chat_id: int, context):
-    if chat_id >= 0:
-        return
-    ts_key = f"chat_admins_ts_{chat_id}"
-    last_ts = db.get_setting(ts_key, "0")
+def _int_setting(key: str, default: int = 0) -> int:
     try:
-        if time.time() - float(last_ts) < 3600:
-            return
-    except Exception:
-        pass
-    try:
-        admins = await context.bot.get_chat_administrators(chat_id)
-        admin_ids = [a.user.id for a in admins if not a.user.is_bot]
-        db.set_setting(f"chat_admins_{chat_id}", json.dumps(admin_ids))
-        db.set_setting(ts_key, str(time.time()))
-        print(f"✅ Кэш админов {chat_id}: {len(admin_ids)} шт.")
-    except Exception as e:
-        print(f"⚠️ Не удалось получить админов {chat_id}: {e}")
+        return int(db.get_setting(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def facts_target():
+    return _int_setting("facts_chat_id", C.FACTS_CHAT_ID), _int_setting("facts_thread_id", 0)
+
+
+def world_target():
+    return _int_setting("world_chat_id", 0), _int_setting("world_thread_id", 0)
+
+
+def _dedupe(rows: list) -> list:
+    seen, out = set(), []
+    for r in rows:
+        if r["text"] in seen:
+            continue
+        seen.add(r["text"])
+        out.append(r)
+    return out
+
+
+def _fmt_fact(f: dict, with_tag: bool = True) -> str:
+    base = f"- [{f['tag']}] {f['text']}" if with_tag else f"- {f['text']}"
+    return base + (f" (год: {f['year']})" if f.get("year") else "")
+
+
+def normal_tag_names(tag_rows: list) -> list:
+    return [r["tag"] for r in tag_rows if not r["tag"].startswith(_SKIP_TAG_PREFIXES)]
+
+
+def _rp_date_line() -> str:
+    rp = get_rp_datetime()
+    if not rp["year"]:
+        return ""
+    return (f"Сейчас в РП: {rp['day']} числа, {rp['month']} месяца, {rp['hour']}:00, "
+            f"{rp['year']} год. Не упоминай события позже {rp['year']} года. ")
 
 
 # =====================================================================
-# ПРОВЕРКА ПРАВ
+# NRP-ПРОВЕРКА
 # =====================================================================
 
-def is_admin(user_id: int, username: str, chat_id: int = None) -> bool:
-    if user_id == ADMIN_ID:
-        return True
-    if RP_OWNER_ID and user_id == RP_OWNER_ID:
-        return True
-    if username and ADMIN_USERNAME and username.lower() == ADMIN_USERNAME.lower():
-        return True
-    saved = db.get_setting("saved_admin_ids")
-    if saved:
-        try:
-            ids = json.loads(saved)
-            if user_id in ids:
-                return True
-        except Exception:
-            pass
-    if chat_id and is_chat_admin(chat_id, user_id):
-        return True
-    return False
+_MONEY_RE = re.compile(r"\d+\s*(млрд|трлн|млн|тыс)")
+_NRP_WORDS = ("технология", "программа", "проект", "армия", "оружие", "завод", "флот",
+              "танк", "самол", "ракет", "ядерн", "дивизи")
 
 
-def tag_in_text(tag: str, text: str) -> bool:
-    text = text.lower()
-    tag = tag.lower()
-    if tag in text:
-        return True
-    if len(tag) > 3 and tag[:-1] in text:
-        return True
-    if len(tag) > 4 and tag[:-2] in text:
-        return True
-    return False
-
-
-def get_facts_chat_id() -> int:
-    saved = db.get_setting("facts_chat_id")
-    if saved:
-        try:
-            return int(saved)
-        except ValueError:
-            pass
-    return FACTS_CHAT_ID
-
-
-def get_facts_thread_id() -> int:
-    saved = db.get_setting("facts_thread_id")
-    if saved:
-        try:
-            return int(saved)
-        except ValueError:
-            pass
-    return 0
-
-
-def get_world_chat_id() -> int:
-    saved = db.get_setting("world_chat_id")
-    if saved:
-        try:
-            return int(saved)
-        except ValueError:
-            pass
-    return 0
-
-
-def get_world_thread_id() -> int:
-    saved = db.get_setting("world_thread_id")
-    if saved:
-        try:
-            return int(saved)
-        except ValueError:
-            pass
-    return 0
-
-
-# =====================================================================
-# ВРЕМЯ РП
-# =====================================================================
-
-def get_rp_datetime() -> dict:
-    saved_year = db.get_setting("rp_year")
-    saved_start = db.get_setting("rp_start_time")
-    saved_month = db.get_setting("rp_start_month", "1")
-    saved_day = db.get_setting("rp_start_day", "1")
-
-    empty = {"year": None, "month": None, "day": None, "hour": None,
-             "full": None, "elapsed_hours": 0, "rp_days": 0, "real_msk": None,
-             "days_to_new_year": None}
-    if not saved_year or not saved_start:
-        return empty
-    try:
-        base_year = int(saved_year)
-        start_ts = float(saved_start)
-        base_month = int(saved_month)
-        base_day = int(saved_day)
-    except (ValueError, TypeError):
-        return empty
-
-    try:
-        import pytz
-        msk_tz = pytz.timezone("Europe/Moscow")
-        now_msk = datetime.now(msk_tz)
-    except ImportError:
-        from datetime import timezone
-        msk_tz = timezone(timedelta(hours=3))
-        now_msk = datetime.now(msk_tz)
-
-    elapsed_real_hours = (now_msk.timestamp() - start_ts) / 3600
-    if elapsed_real_hours < 0:
-        elapsed_real_hours = 0
-
-    speed = 365 / 24
-    rp_days_total = elapsed_real_hours * speed
-
-    start_date = datetime(base_year, base_month, base_day)
-    rp_date = start_date + timedelta(days=rp_days_total)
-
-    next_year_date = datetime(rp_date.year + 1, 1, 1)
-    days_to_new_year = (next_year_date - rp_date).days
-
-    return {
-        "year": rp_date.year,
-        "month": rp_date.month,
-        "day": rp_date.day,
-        "hour": rp_date.hour,
-        "full": rp_date.strftime("%d.%m.%Y %H:%M"),
-        "elapsed_hours": elapsed_real_hours,
-        "rp_days": rp_days_total,
-        "real_msk": now_msk.strftime("%d.%m.%Y %H:%M:%S"),
-        "days_to_new_year": days_to_new_year,
-    }
-
-
-# =====================================================================
-# РАЗБИВКА ТЕКСТА
-# =====================================================================
-
-def split_text(text: str, max_length: int = 4000) -> list[str]:
-    if len(text) <= max_length:
-        return [text]
-    parts = []
-    paragraphs = text.split("\n\n")
-    current_part = ""
-    for p in paragraphs:
-        if len(p) > max_length:
-            lines = p.split("\n")
-            for line in lines:
-                if len(current_part) + len(line) + 1 <= max_length:
-                    current_part += line + "\n"
-                else:
-                    if current_part:
-                        parts.append(current_part.strip())
-                    current_part = line + "\n"
-        else:
-            if len(current_part) + len(p) + 2 <= max_length:
-                current_part += p + "\n\n"
-            else:
-                if current_part:
-                    parts.append(current_part.strip())
-                current_part = p + "\n\n"
-    if current_part:
-        parts.append(current_part.strip())
-    return parts
-
-
-# =====================================================================
-# WORLD BANK
-# =====================================================================
-
-WB_BASE_URL = "https://api.worldbank.org/v2"
-
-COUNTRY_CODES = {
-    "россия": "RUS", "рф": "RUS", "russia": "RUS",
-    "сша": "USA", "соединенные штаты": "USA", "америка": "USA", "usa": "USA",
-    "китай": "CHN", "china": "CHN",
-    "германия": "DEU", "germany": "DEU",
-    "франция": "FRA", "france": "FRA",
-    "великобритания": "GBR", "англия": "GBR", "uk": "GBR",
-    "япония": "JPN", "japan": "JPN",
-    "индия": "IND", "india": "IND",
-    "бразилия": "BRA", "brazil": "BRA",
-    "украина": "UKR", "ukraine": "UKR",
-    "беларусь": "BLR", "belarus": "BLR",
-    "казахстан": "KAZ", "kazakhstan": "KAZ",
-    "финляндия": "FIN", "finland": "FIN",
-    "швеция": "SWE", "sweden": "SWE",
-    "турция": "TUR", "turkey": "TUR",
-    "болгария": "BGR", "bulgaria": "BGR",
-    "сербия": "SRB", "serbia": "SRB",
-}
-
-INDICATOR_CODES = {
-    "ввп": "NY.GDP.MKTP.CD", "gdp": "NY.GDP.MKTP.CD",
-    "ввп на душу": "NY.GDP.PCAP.CD",
-    "население": "SP.POP.TOTL",
-    "инфляция": "FP.CPI.TOTL.ZG",
-    "безработица": "SL.UEM.TOTL.ZS",
-    "продолжительность жизни": "SP.DYN.LE00.IN",
-}
-
-
-async def fetch_world_bank_data(country_code: str, indicator_code: str, year: int = None) -> str | None:
-    url = f"{WB_BASE_URL}/country/{country_code}/indicator/{indicator_code}"
-    params = {"format": "json", "per_page": 100}
-    if year:
-        params["date"] = str(year)
-    else:
-        params["MRV"] = 1
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(url, params=params)
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            if not isinstance(data, list) or len(data) < 2:
-                return None
-            records = data[1]
-            if not records:
-                return None
-            valid_records = [r for r in records if r.get("value") is not None]
-            if not valid_records:
-                return None
-            record = valid_records[0]
-            value = record["value"]
-            date = record["date"]
-            indicator_name = record["indicator"]["value"]
-            country_name = record["country"]["value"]
-            if indicator_code in ["FP.CPI.TOTL.ZG", "SL.UEM.TOTL.ZS"]:
-                formatted_value = f"{value:.1f}%"
-            else:
-                formatted_value = f"{value:,.0f}".replace(",", " ")
-            return f"{indicator_name} для {country_name} ({date}): {formatted_value}"
-    except Exception as e:
-        print(f"⚠️ World Bank ошибка: {str(e)[:80]}")
+async def quick_nrp_check(text: str, year: int = None):
+    """Возвращает причину NRP или None. Проверяются только факты с числами/военно-технической лексикой."""
+    low = text.lower()
+    if not (_MONEY_RE.search(low) or any(w in low for w in _NRP_WORDS)):
         return None
-
-
-async def get_economic_context(text: str) -> str | None:
-    text_lower = text.lower()
-    found_country_code = None
-    for country_name, code in COUNTRY_CODES.items():
-        if country_name in text_lower:
-            found_country_code = code
-            break
-    if not found_country_code:
-        return None
-    found_indicator_code = None
-    for indicator_name, code in INDICATOR_CODES.items():
-        if indicator_name in text_lower:
-            found_indicator_code = code
-            break
-    if not found_indicator_code:
-        return None
-    year = None
-    year_match = re.search(r"\b(19\d{2}|20\d{2})\b", text)
-    if year_match:
-        year = int(year_match.group(1))
-    result = await fetch_world_bank_data(found_country_code, found_indicator_code, year)
-    if result:
-        return f"[ДАННЫЕ WORLD BANK]: {result}"
-    return None
-
-
-# =====================================================================
-# LLM
-# =====================================================================
-
-async def call_groq(primary_key: str, model: str, messages: list, temperature: float = 0.3) -> str | None:
-    keys_to_try = [primary_key] + [k for k in GROQ_ALL_KEYS if k != primary_key]
-    keys_to_try = [k for k in keys_to_try if k]
-    for i, key in enumerate(keys_to_try):
-        try:
-            data = {"model": model, "temperature": temperature, "messages": messages}
-            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(GROQ_URL, headers=headers, json=data)
-                if resp.status_code == 200:
-                    return resp.json()["choices"][0]["message"]["content"]
-                # Логируем полный ответ для диагностики
-                print(f"⚠️ Groq #{i+1} ({model}) status={resp.status_code}: {resp.text[:300]}")
-        except Exception as e:
-            print(f"⚠️ Groq #{i+1} exception: {str(e)[:200]}")
-    return None
-
-
-async def call_gemini(messages: list, temperature: float = 0.3) -> str | None:
-    if not GEMINI_KEY:
-        print("⚠️ Gemini: GEMINI_KEY не задан")
-        return None
-    system_prompt = ""
-    contents = []
-    for msg in messages:
-        if msg["role"] == "system":
-            system_prompt += msg["content"] + "\n"
-        else:
-            contents.append({"role": "user" if msg["role"] == "user" else "model",
-                             "parts": [{"text": msg["content"]}]})
-    payload = {"contents": contents, "generationConfig": {"temperature": temperature}}
-    if system_prompt:
-        payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
-    try:
-        url = GEMINI_URL_TEMPLATE.format(key=GEMINI_KEY)
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code == 200:
-                return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            print(f"⚠️ Gemini status={resp.status_code}: {resp.text[:300]}")
-    except Exception as e:
-        print(f"⚠️ Gemini exception: {str(e)[:200]}")
-    return None
-
-
-async def search_web(query: str) -> str | None:
-    if not OLLAMA_KEY:
-        return None
-    try:
-        headers = {"Authorization": f"Bearer {OLLAMA_KEY}"}
-        data = {"query": query, "max_results": 3}
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(OLLAMA_URL, headers=headers, json=data)
-            if resp.status_code != 200:
-                return None
-            results = resp.json().get("results", [])
-            if not results:
-                return None
-            return "\n".join([f"• {r.get('title', 'Без названия')}: {r.get('content', '')[:300]}" for r in results[:3]])
-    except Exception as e:
-        print(f"⚠️ Ollama ошибка: {str(e)[:80]}")
-        return None
-
-
-# =====================================================================
-# БЫСТРЫЙ NRP
-# =====================================================================
-
-async def quick_nrp_check(text: str, year: int = None) -> str | None:
-    text_lower = text.lower()
-    has_money = bool(re.search(r"\d+\s*(млрд|трлн|млн|тыс)", text_lower))
-    has_keywords = any(w in text_lower for w in ["технология", "программа", "проект", "армия", "оружие", "завод", "флот"])
-
-    if not (has_money or has_keywords):
-        return None
-
     prompt = (
-        f"Проверь факт на NRP (нарушение реализма) для РП 2010-х годов.\n"
+        "Проверь факт на NRP (нарушение реализма) для РП 2010-х годов.\n"
         f"Факт: {text}\n"
         + (f"Год: {year}\n" if year else "")
         + "NRP — это ТОЛЬКО физическая невозможность:\n"
@@ -427,98 +126,67 @@ async def quick_nrp_check(text: str, year: int = None) -> str | None:
         "Если факт физически невозможен — ответь ТОЛЬКО: 'NRP: [краткая причина]'.\n"
         "Если реалистичен — ответь ТОЛЬКО: 'OK'."
     )
-
     messages = [
         {"role": "system", "content": "Ты — строгий Гейм-Мастер. Проверяешь факты на реализм."},
-        {"role": "user", "content": prompt}
+        {"role": "user", "content": prompt},
     ]
-    result = await call_groq(GROQ_KEY_MAIN, MODEL_MAIN, messages, temperature=0.1)
-    if result and "NRP" in result.upper():
-        return result.strip()
+    result = await ask("main", messages, temperature=0.1)
+    if result and result.strip().upper().startswith("NRP"):
+        return re.sub(r"^NRP\s*[:\-—]?\s*", "", result.strip(), flags=re.I) or "нереалистично"
     return None
 
 
 # =====================================================================
-# ИСТОРИЯ
+# СОХРАНЕНИЕ ФАКТОВ
 # =====================================================================
 
-async def maybe_summarize_history(chat_id: int, user_id: int):
-    count = db.count_active_history(chat_id, user_id)
-    if count < HISTORY_SUMMARIZE_THRESHOLD:
-        return
-    old_msgs = db.get_old_messages_for_summary(chat_id, user_id, batch=HISTORY_SUMMARIZE_BATCH)
-    if not old_msgs:
-        return
-    dialog_text = "\n".join([f"{m['role']}: {m['content']}" for m in old_msgs])
-    summary = await call_groq(
-        GROQ_KEY_SUMMARY, MODEL_SUMMARY,
-        [{"role": "system", "content": "Сожми диалог в 3-5 предложений. Сохрани все числа, имена, ключевые решения и факты. Не добавляй ничего от себя."},
-         {"role": "user", "content": dialog_text}],
-        temperature=0.3
-    )
-    if not summary:
-        return
-    db.archive_messages([m["id"] for m in old_msgs])
-    db.add_history(chat_id, user_id, "system", f"[СЖАТАЯ ИСТОРИЯ] {summary}", is_summary=True)
-
-
-# =====================================================================
-# СОХРАНЕНИЕ ФАКТОВ (С УЧЁТОМ ТЕМЫ)
-# =====================================================================
-
-async def save_fact_from_message(update: Update, text: str) -> bool:
-    if not text.startswith("#"):
-        return False
-    chat_id = update.message.chat.id
-    thread_id = update.message.message_thread_id or 0
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username or ""
-
-    facts_chat = get_facts_chat_id()
-    facts_thread = get_facts_thread_id()
-    world_chat = get_world_chat_id()
-    world_thread = get_world_thread_id()
-
-    is_facts = (chat_id == facts_chat) and (thread_id == facts_thread)
-    is_world = (chat_id == world_chat) and (thread_id == world_thread) and not is_facts
-
-    if not (is_facts or is_world or is_admin(user_id, username, chat_id)):
-        return False
-
-    match = re.match(r"^((?:#[\w\-]+\s*)+)(.+)$", text, re.DOTALL)
-    if not match:
-        return False
-
-    tags = re.findall(r"#([\w\-]+)", match.group(1))
-    fact_text = match.group(2).strip()
-    if not tags:
-        return False
-
-    year = None
-    ym = re.search(r"\((\d{4})\)", fact_text)
-    if ym:
-        year = int(ym.group(1))
-    else:
-        ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", fact_text)
-        if ym:
-            year = int(ym.group(1))
-
+def _store_fact(tags: list, fact_text: str, user_id: int, username: str, year, is_world: bool) -> int:
+    """Синхронно (в потоке БД): сохраняет факт по каждому тегу, возвращает сколько новых записей."""
+    added = 0
     for tag in tags:
-        save_tag = f"world_{tag.lower()}" if is_world else tag.lower()
-        db.add_fact(save_tag, fact_text, user_id, username, year)
+        save_tag = f"world_{tag}" if is_world else tag
+        if db.add_fact(save_tag, fact_text, user_id, username, year):
+            added += 1
+    return added
 
-    db.add_history(chat_id, user_id, "user", text)
 
-    nrp = await quick_nrp_check(fact_text, year)
+async def save_fact_from_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:
+    msg = update.message
+    chat_id = msg.chat.id
+    thread_id = thread_id_of(msg)
+    user = msg.from_user
+
+    facts_chat, facts_thread = facts_target()
+    world_chat, world_thread = world_target()
+    is_facts = bool(facts_chat) and chat_id == facts_chat and thread_id == facts_thread
+    is_world = (bool(world_chat) and chat_id == world_chat
+                and thread_id == world_thread and not is_facts)
+
+    if not (is_facts or is_world or is_staff(user.id)):
+        return False
+
+    parsed = parse_fact_line(text)
+    if not parsed:
+        if msg.chat.type == "private":
+            await safe_reply(msg, "ℹ️ Формат: <code>#тег текст факта (год)</code>")
+        return False
+    tags, fact_text, year = parsed
+
+    added = await db.arun(_store_fact, tags, fact_text, user.id, user.username or "", year, is_world)
+
+    nrp = await quick_nrp_check(fact_text, year) if added else None
     if nrp:
-        warning = f"🚨 **NRP:** {nrp}"
-        if RP_OWNER_USERNAME:
-            warning += f"\n\n⚠️ @{RP_OWNER_USERNAME}, проверь."
-        await update.message.reply_text(warning, parse_mode="Markdown")
-    else:
-        if update.message.chat.type == "private":
-            await update.message.reply_text("✅ Запомнил.")
-
+        warning = f"🚨 <b>NRP:</b> {esc(nrp)}"
+        if C.RP_OWNER_USERNAME:
+            warning += f"\n\n⚠️ @{esc(C.RP_OWNER_USERNAME)}, проверь."
+        await safe_reply(msg, warning)
+    elif msg.chat.type == "private":
+        await safe_reply(msg, "✅ Запомнил." if added else "ℹ️ Такой факт уже есть в базе.")
+    elif added:
+        try:
+            await msg.set_reaction("👍")
+        except Exception:
+            pass
     return True
 
 
@@ -526,257 +194,186 @@ async def save_fact_from_message(update: Update, text: str) -> bool:
 # МАССОВЫЙ ИМПОРТ
 # =====================================================================
 
+def _store_bulk(lines: list, user_id: int, username: str, is_world: bool) -> int:
+    saved = 0
+    for line in lines:
+        parsed = parse_fact_line(line)
+        if not parsed:
+            continue
+        tags, fact_text, year = parsed
+        if len(fact_text) < 10:
+            continue
+        if _store_fact(tags, fact_text, user_id, username, year, is_world):
+            saved += 1
+    return saved
+
+
 async def bulk_import(update: Update, text: str, is_world: bool = False) -> int:
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username or ""
-
+    user = update.message.from_user
     prompt = (
-        f"Разбей следующий текст на отдельные факты для РП-базы знаний.\n"
-        f"Каждый факт — одна строка в формате: #тег факт (год)\n"
-        f"Теги: #страна или #тема (например #россия, #нато, #экономика, #армия).\n"
-        f"Год в скобках в конце, если известен: (2010)\n"
-        f"Можно ставить несколько тегов в начале строки.\n"
-        f"НЕ добавляй ничего от себя. Только список фактов, каждая с новой строки.\n\n"
-        f"ТЕКСТ:\n{text}"
+        "Разбей следующий текст на отдельные факты для РП-базы знаний.\n"
+        "Каждый факт — одна строка в формате: #тег факт (год)\n"
+        "Теги: #страна или #тема (например #россия, #нато, #экономика, #армия).\n"
+        "Год в скобках в конце, если известен: (2010)\n"
+        "Можно ставить несколько тегов в начале строки.\n"
+        "НЕ добавляй ничего от себя. Только список фактов, каждая с новой строки.\n\n"
+        f"ТЕКСТ:\n{text[:C.MAX_INPUT_CHARS]}"
     )
-
     messages = [
         {"role": "system", "content": "Ты — парсер фактов для РП. Разбиваешь текст на отдельные факты с тегами. Отвечаешь только списком фактов."},
-        {"role": "user", "content": prompt}
+        {"role": "user", "content": prompt},
     ]
-
-    result = await call_groq(GROQ_KEY_MAIN, MODEL_MAIN, messages, temperature=0.2)
-    if not result:
-        result = await call_gemini(messages, temperature=0.2)
+    result = await ask("main", messages, temperature=0.2)
     if not result:
         return 0
+    lines = [ln.strip() for ln in result.split("\n") if ln.strip().startswith("#")]
+    return await db.arun(_store_bulk, lines, user.id, user.username or "", is_world)
 
-    saved = 0
-    for line in result.split("\n"):
-        line = line.strip()
-        if not line.startswith("#"):
-            continue
 
-        match = re.match(r"^((?:#[\w\-]+\s*)+)(.+)$", line, re.DOTALL)
-        if not match:
-            continue
+# =====================================================================
+# ИСТОРИЯ (сжатие в фоне)
+# =====================================================================
 
-        tags = re.findall(r"#([\w\-]+)", match.group(1))
-        fact_text = match.group(2).strip()
-        if not tags or len(fact_text) < 10:
-            continue
-
-        year = None
-        ym = re.search(r"\((\d{4})\)", fact_text)
-        if ym:
-            year = int(ym.group(1))
-        else:
-            ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", fact_text)
-            if ym:
-                year = int(ym.group(1))
-
-        for tag in tags:
-            save_tag = f"world_{tag.lower()}" if is_world else tag.lower()
-            db.add_fact(save_tag, fact_text, user_id, username, year)
-        saved += 1
-
-    return saved
+async def maybe_summarize_history(chat_id: int, user_id: int):
+    key = (chat_id, user_id)
+    if key in _summarizing:
+        return
+    _summarizing.add(key)
+    try:
+        count = await db.arun(db.count_active_history, chat_id, user_id)
+        if count < C.HISTORY_SUMMARIZE_THRESHOLD:
+            return
+        old = await db.arun(db.get_old_messages_for_summary, chat_id, user_id, C.HISTORY_SUMMARIZE_BATCH)
+        if not old:
+            return
+        prev = await db.arun(db.get_summary, chat_id, user_id)
+        dialog = "\n".join(f"{m['role']}: {shorten(m['content'], 1500)}" for m in old)
+        if prev:
+            dialog = f"[Предыдущее резюме]: {prev}\n\n{dialog}"
+        summary = await ask("summary", [
+            {"role": "system", "content": "Сожми диалог в 3-5 предложений. Сохрани все числа, имена, ключевые решения и факты. Не добавляй ничего от себя."},
+            {"role": "user", "content": dialog},
+        ], temperature=0.3)
+        if summary:
+            await db.arun(db.save_summary, chat_id, user_id, summary, [m["id"] for m in old])
+    finally:
+        _summarizing.discard(key)
 
 
 # =====================================================================
 # ОТВЕТ НА ВОПРОС
 # =====================================================================
 
-async def answer_question(update: Update, text: str) -> str:
-    chat_id = update.message.chat.id
-    user_id = update.message.from_user.id
-    if not db.check_cooldown(user_id, COOLDOWN_DIALOG):
+async def answer_question(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    msg = update.message
+    chat_id, user_id = msg.chat.id, msg.from_user.id
+
+    if _dialog_cd.hit(user_id, C.COOLDOWN_DIALOG):
         return None
-    db.add_history(chat_id, user_id, "user", text)
-    await maybe_summarize_history(chat_id, user_id)
-    history = db.get_history(chat_id, user_id, limit=HISTORY_CONTEXT_LIMIT)
 
-    # Обрезаем текст до 4000
-    short_text = text[:4000] if len(text) > 4000 else text
+    bot_un = context.bot.username or ""
+    question = re.sub(rf"@{re.escape(bot_un)}", "", text, flags=re.I).strip() if bot_un else text
+    question = question[:C.MAX_INPUT_CHARS]
+    if not question:
+        return None
 
-    all_tags = db.get_all_tags()
-    relevant_facts = []
-    for t in all_tags:
-        if not t["tag"].startswith("world_") and tag_in_text(t["tag"], short_text):
-            relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
+    await send_typing(context.bot, chat_id, thread_id_of(msg))
 
-    wb_context = await get_economic_context(short_text)
+    tag_rows = await db.arun(db.get_all_tags)
+    matched = match_tags(normal_tag_names(tag_rows), question)
 
-    rp = get_rp_datetime()
-    date_line = f"Сейчас в РП: {rp['day']} числа, {rp['month']} месяца, {rp['hour']}:00, {rp['year']} год. " if rp["year"] else ""
+    async def load_facts():
+        if not matched:
+            return [], []
+        f = await db.arun(db.get_recent_facts, matched, 12, False)
+        v = await db.arun(db.get_recent_facts, matched, 3, True)
+        return f, v
 
-    system_parts = [
-        f"Ты — аналитический РП-бот. {date_line}Отвечай кратко, по делу, только на русском.",
-    ]
+    (facts, verdicts), (summary, history), wb_context = await asyncio.gather(
+        load_facts(),
+        db.arun(db.get_context, chat_id, user_id, C.HISTORY_CONTEXT_LIMIT),
+        get_economic_context(question),
+    )
+    facts = list(reversed(_dedupe(facts)))        # от старых к новым
+    verdicts = list(reversed(verdicts))
 
-    if relevant_facts:
-        facts_str = "\n".join([
-            f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "")
-            for f in relevant_facts[:10]
-        ])
-        system_parts.append(f"ФАКТЫ ИЗ БАЗЫ (используй ТОЛЬКО их):\n{facts_str}")
+    date_line = _rp_date_line()
+    parts = [f"Ты — аналитический РП-бот. {date_line}Отвечай кратко, по делу, только на русском."]
+
+    if facts or verdicts:
+        block = "\n".join(_fmt_fact(f) for f in facts)
+        parts.append(f"ФАКТЫ ИЗ БАЗЫ (используй ТОЛЬКО их):\n{block or 'нет обычных фактов'}")
+        if verdicts:
+            parts.append("ПРОШЛЫЕ ВЕРДИКТЫ ГМ:\n" + "\n".join(
+                f"- {shorten(v['text'], 400)}" for v in verdicts))
         if wb_context:
-            system_parts.append(f"\nДОПОЛНИТЕЛЬНО (World Bank):\n{wb_context}")
-        system_parts.append("\n⚠️ Отвечай ТОЛЬКО на основе фактов. Если чего-то нет — скажи 'нет данных'.")
-
+            parts.append(f"ДОПОЛНИТЕЛЬНО (World Bank):\n{wb_context}")
+        parts.append("⚠️ Отвечай ТОЛЬКО на основе фактов. Если чего-то нет — скажи 'нет данных'.")
     elif wb_context:
-        system_parts.append(f"В базе нет фактов, но есть World Bank:\n{wb_context}")
-
+        parts.append(f"В базе нет фактов, но есть World Bank:\n{wb_context}")
     else:
-        search_result = await search_web(short_text)
-        if search_result:
-            system_parts.append(f"РЕЗУЛЬТАТЫ ПОИСКА:\n{search_result}\n\nПометь ответ как '(из интернета)'.")
+        found = await search_web(question)
+        if found:
+            parts.append(f"РЕЗУЛЬТАТЫ ПОИСКА:\n{found}\n\nПометь ответ как '(из интернета)'.")
         else:
-            system_parts.append("Ответь на основе общих знаний (до 2020). Пометь '(общие данные, не из базы)'.")
+            parts.append("Ответь на основе общих знаний. Пометь '(общие данные, не из базы)'.")
 
-    system_prompt = "\n".join(system_parts)
-    messages = [{"role": "system", "content": system_prompt}]
-    for h in history[:-1]:
-        messages.append({"role": h["role"], "content": h["content"]})
-    messages.append({"role": "user", "content": short_text})
+    messages = [{"role": "system", "content": "\n".join(parts)}]
+    if summary:
+        messages.append({"role": "system", "content": f"[СЖАТАЯ ИСТОРИЯ ДИАЛОГА] {summary}"})
+    for h in history:
+        if h["role"] in ("user", "assistant"):
+            messages.append({"role": h["role"], "content": shorten(h["content"], 1500)})
+    messages.append({"role": "user", "content": question})
 
-    answer = await call_groq(GROQ_KEY_MAIN, MODEL_MAIN, messages, temperature=0.5)
-    if not answer:
-        answer = await call_gemini(messages, temperature=0.5)
+    answer = await ask("main", messages, temperature=0.5)
     if not answer:
         return "❌ Все модели недоступны. Попробуй позже."
-    db.add_history(chat_id, user_id, "assistant", answer)
+
+    await db.arun(db.add_exchange, chat_id, user_id, question, answer)
+    spawn(maybe_summarize_history(chat_id, user_id))
     return answer
 
 
 # =====================================================================
-# ВЕРДИКТ (С ФИКСАМИ: FALLBACK МОДЕЛЕЙ, ОБРЕЗКА, ХЕШТЕГИ)
+# ВЕРДИКТ
 # =====================================================================
 
-async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username or ""
-    chat_id = update.message.chat.id
-    is_adm = is_admin(user_id, username, chat_id)
-
-    cooldown = 15.0 if is_adm else 30.0
-    if not db.check_cooldown(user_id, cooldown, is_verdict=True):
-        await update.message.reply_text(f"⏳ Подожди {int(cooldown)} сек перед новым вердиктом.")
-        return
-
-    daily_limit = 100 if is_adm else 25
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    limit_key = f"verdict_limit_{user_id}_{today}"
-    used_today = int(db.get_setting(limit_key, "0"))
-
-    if used_today >= daily_limit:
-        await update.message.reply_text(f"⏳ Дневной лимит вердиктов исчерпан ({daily_limit}/{daily_limit}). Попробуй завтра.")
-        return
-
-    raw = update.message.text or ""
-    cmd_text = raw.replace("/verdict", "").strip()
-    # Убираем упоминание бота из команды
+def _parse_verdict_input(raw: str, reply_text: str):
+    """Возвращает (текст_ситуации, год, хештеги). Логика разбора — как в старой версии."""
+    cmd_text = re.sub(r"^/verdict(@\w+)?", "", raw, flags=re.I).strip()
     cmd_text = re.sub(r"@\w+", "", cmd_text).strip()
 
-    reply_text = ""
-    if update.message.reply_to_message and update.message.reply_to_message.text:
-        reply_text = update.message.reply_to_message.text
-
-    # === ФИКС: хештеги вырезаем из текста, но запоминаем ===
-    hashtag_source = reply_text if reply_text else cmd_text
-    extracted_hashtags = [h.lower() for h in re.findall(r"#([\w\-]+)", hashtag_source)]
+    source = reply_text or cmd_text
+    hashtags = [h.lower() for h in re.findall(r"#([\w\-]+)", source)]
 
     cmd_text = re.sub(r"#[\w\-]+", "", cmd_text).strip()
-    if reply_text:
-        reply_text = re.sub(r"#[\w\-]+", "", reply_text).strip()
+    reply_text = re.sub(r"#[\w\-]+", "", reply_text).strip() if reply_text else ""
 
     year = None
     if reply_text:
         text = reply_text
-        ym = re.search(r"\b(19\d{2}|20\d{2})\b", cmd_text)
-        if ym:
-            year = int(ym.group(1))
-        if not year:
-            ym2 = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", reply_text)
-            if ym2:
-                year = int(ym2.group(1))
-                text = reply_text[:ym2.start()].strip()
+        m = re.search(r"\b(19\d{2}|20\d{2})\b", cmd_text)
+        if m:
+            year = int(m.group(1))
+        else:
+            m2 = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", reply_text)
+            if m2:
+                year = int(m2.group(1))
+                text = reply_text[:m2.start()].strip()
     else:
         text = cmd_text
-        ym = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", text)
-        if ym:
-            year = int(ym.group(1))
-            text = text[:ym.start()].strip()
+        m = re.search(r"\b(19\d{2}|20\d{2})\b\s*$", text)
+        if m:
+            year = int(m.group(1))
+            text = text[:m.start()].strip()
+    return text, year, hashtags
 
-    if not text or len(text) < 5:
-        await update.message.reply_text(
-            "❌ Используй один из вариантов:\n"
-            "• `/verdict текст ситуации [год]`\n"
-            "• `/verdict` в ответ на сообщение\n"
-            "• `/verdict 2010` в ответ на сообщение",
-            parse_mode="Markdown"
-        )
-        return
 
-    # === ФИКС: обрезаем текст до 4000 символов ===
-    if len(text) > 4000:
-        text = text[:4000] + "... [текст обрезан]"
-
-    rp = get_rp_datetime()
-    if not year:
-        year = rp["year"]
-
-    date_context = ""
-    if year and rp["month"] and rp["day"]:
-        date_context = f"Сейчас в РП: {rp['day']} числа, {rp['month']} месяца, {rp['hour']}:00, {year} год.\n"
-    elif year:
-        date_context = f"Сейчас в РП: {year} год.\n"
-
-    year_display = f" ({year})" if year else ""
-
-    await update.message.reply_text("⏳ Готовлю детальный вердикт...")
-
-    all_tags = db.get_all_tags()
-    relevant_facts = []
-    world_facts = []
-    # Ищем по вырезанным хештегам + по вхождению в текст
-    for t in all_tags:
-        if t["tag"].startswith("world_"):
-            world_facts.extend(db.get_facts_by_tag(t["tag"]))
-        elif t["tag"] in extracted_hashtags or tag_in_text(t["tag"], text):
-            relevant_facts.extend(db.get_facts_by_tag(t["tag"]))
-
-    regular_facts = []
-    previous_verdicts = []
-    for f in relevant_facts:
-        if "[ВЕРДИКТ]" in f["text"]:
-            previous_verdicts.append(f)
-        else:
-            regular_facts.append(f)
-
-    regular_facts = regular_facts[:10]  # Фикс: 10 вместо 20
-    previous_verdicts = sorted(previous_verdicts, key=lambda x: x["created_at"], reverse=True)[:5]  # Фикс: 5 вместо 10
-    world_facts = sorted(world_facts, key=lambda x: x["created_at"], reverse=True)[:10]  # Фикс: 10 вместо 15
-
-    facts_str = "\n".join([
-        f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "")
-        for f in regular_facts
-    ]) if regular_facts else "Нет обычных фактов."
-
-    verdicts_str = "\n".join([
-        f"- (год {f['year'] or '?'}) {f['text']}"
-        for f in previous_verdicts
-    ]) if previous_verdicts else "Прошлых вердиктов нет."
-
-    world_str = "\n".join([
-        f"- [{f['tag'].replace('world_', '')}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "")
-        for f in world_facts
-    ]) if world_facts else "Мировых новостей нет."
-
-    wb_context = await get_economic_context(text)
-
-    system_prompt = (
-        f"Ты — строгий Гейм-Мастер геополитической РП-игры.\n"
+def _build_verdict_prompt(date_context: str, year_display: str, facts_str: str,
+                          verdicts_str: str, world_str: str, wb_context) -> str:
+    prompt = (
+        "Ты — строгий Гейм-Мастер геополитической РП-игры.\n"
         f"{date_context}\n"
         "ТВОЯ ГЛАВНАЯ ЗАДАЧА — проверить заявку на NRP, СВЕРИВ ЕЁ С ФАКТАМИ ИЗ БАЗЫ, "
         "С ПРОШЛЫМИ ВЕРДИКТАМИ, С МИРОВЫМИ НОВОСТЯМИ И С РЕАЛЬНОЙ ИСТОРИЕЙ.\n\n"
@@ -811,88 +408,150 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🌍 МИРОВЫЕ НОВОСТИ:\n{world_str}"
     )
     if wb_context:
-        system_prompt += f"\n\n{wb_context}"
+        prompt += f"\n\n{wb_context}"
+    return prompt
 
-    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Ситуация: {text}"}]
 
-    # === FALLBACK МОДЕЛЕЙ (только живые) ===
-    VERDICT_MODELS = [
-        "openai/gpt-oss-120b",
-        "qwen/qwen3.8-27b",
-    ]
+async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    user = msg.from_user
+    chat_id = msg.chat.id
+    staff = is_staff(user.id)
 
-    verdict = None
-    for model_name in VERDICT_MODELS:
-        print(f"🔄 Пробую модель: {model_name}")
-        verdict = await call_groq(GROQ_KEY_VERDICT, model_name, messages, temperature=0.6)
-        if verdict:
-            print(f"✅ Модель {model_name} ответила")
-            break
+    reply_text = ""
+    if msg.reply_to_message:
+        reply_text = msg.reply_to_message.text or msg.reply_to_message.caption or ""
+    text, year, hashtags = _parse_verdict_input(msg.text or "", reply_text)
 
-    if not verdict:
-        print("⚠️ Все модели Groq упали, пробую Gemini")
-        verdict = await call_gemini(messages, temperature=0.6)
-
-    if not verdict:
-        await update.message.reply_text("❌ Не удалось получить вердикт. Все модели недоступны. Попробуй позже.")
+    if not text or len(text) < 5:
+        await safe_reply(
+            msg,
+            "❌ Используй один из вариантов:\n"
+            "• <code>/verdict текст ситуации [год]</code>\n"
+            "• <code>/verdict</code> в ответ на сообщение\n"
+            "• <code>/verdict 2010</code> в ответ на сообщение",
+        )
         return
 
-    if "🚨 NRP" in verdict and RP_OWNER_USERNAME:
-        verdict += f"\n\n⚠️ @{RP_OWNER_USERNAME}, проверь на NRP."
+    if user.id in _busy_verdict:
+        await safe_reply(msg, "⏳ Твой предыдущий вердикт ещё готовится.")
+        return
 
-    save_tag = "вердикт"
-    for t in all_tags:
-        if not t["tag"].startswith("world_") and tag_in_text(t["tag"], text):
-            save_tag = t["tag"]
-            break
-    if not is_adm:
-        save_tag = f"игрок_{save_tag}"
+    cooldown = C.COOLDOWN_VERDICT_STAFF if staff else C.COOLDOWN_VERDICT_PLAYER
+    wait = _verdict_cd.hit(user.id, cooldown)
+    if wait:
+        await safe_reply(msg, f"⏳ Подожди ещё {int(wait) + 1} сек перед новым вердиктом.")
+        return
 
-    fact_text = f"[ВЕРДИКТ] {text[:300]} → {verdict[:400]}"
-    db.add_fact(save_tag, fact_text, user_id, username, year, is_verdict=True)
-    db.set_setting(limit_key, str(used_today + 1))
+    daily_limit = C.VERDICT_LIMIT_STAFF if staff else C.VERDICT_LIMIT_PLAYER
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    used = await db.arun(db.get_usage, user.id, today, "verdict")
+    if used >= daily_limit:
+        await safe_reply(msg, f"⏳ Дневной лимит вердиктов исчерпан ({daily_limit}/{daily_limit}). Попробуй завтра.")
+        return
 
-    # === ФИКС: обрезаем вердикт до 10000 символов ===
-    if len(verdict) > 10000:
-        verdict = verdict[:10000] + "\n\n…[вердикт обрезан]"
+    _busy_verdict.add(user.id)
+    status = None
+    try:
+        if len(text) > C.MAX_INPUT_CHARS:
+            text = text[:C.MAX_INPUT_CHARS] + "... [текст обрезан]"
 
-    parts = split_text(verdict, max_length=4000)
-    for part in parts:
-        try:
-            await update.message.reply_text(part, parse_mode="Markdown")
-        except Exception:
-            await update.message.reply_text(part)
+        rp = get_rp_datetime()
+        if not year:
+            year = rp["year"]
+        if year and rp["month"] and rp["day"]:
+            date_context = f"Сейчас в РП: {rp['day']} числа, {rp['month']} месяца, {rp['hour']}:00, {year} год.\n"
+        elif year:
+            date_context = f"Сейчас в РП: {year} год.\n"
+        else:
+            date_context = ""
+        year_display = f" ({year})" if year else ""
+
+        status = await safe_reply(msg, "⏳ Готовлю детальный вердикт...")
+        await send_typing(context.bot, chat_id, thread_id_of(msg))
+
+        tag_rows = await db.arun(db.get_all_tags)
+        names = normal_tag_names(tag_rows)
+        matched = list(dict.fromkeys([t for t in names if t in hashtags] + match_tags(names, text)))
+
+        (regular, prev_verdicts, world), wb_context = await asyncio.gather(
+            asyncio.gather(
+                db.arun(db.get_recent_facts, matched, 10, False),
+                db.arun(db.get_recent_facts, matched, 5, True),
+                db.arun(db.get_world_facts, 10),
+            ),
+            get_economic_context(text),
+        )
+        regular = list(reversed(_dedupe(regular)))
+
+        facts_str = "\n".join(_fmt_fact(f) for f in regular) or "Нет обычных фактов."
+        verdicts_str = "\n".join(
+            f"- (год {v['year'] or '?'}) {shorten(v['text'], 500)}" for v in prev_verdicts
+        ) or "Прошлых вердиктов нет."
+        world_str = "\n".join(
+            _fmt_fact({**w, "tag": w["tag"][len("world_"):]}) for w in world
+        ) or "Мировых новостей нет."
+
+        system_prompt = _build_verdict_prompt(
+            date_context, year_display, facts_str, verdicts_str, world_str, wb_context)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Ситуация: {text}"},
+        ]
+
+        verdict = await ask("verdict", messages, temperature=0.6)
+        if not verdict:
+            await safe_reply(msg, "❌ Не удалось получить вердикт. Все модели недоступны. Попробуй позже.")
+            _verdict_cd.reset(user.id)  # попытка не удалась — кулдаун не тратим
+            return
+
+        is_nrp = "🚨 NRP" in verdict[:80]
+        if is_nrp and C.RP_OWNER_USERNAME:
+            verdict += f"\n\n⚠️ @{C.RP_OWNER_USERNAME}, проверь на NRP."
+
+        # Отказы по NRP в базу НЕ пишем: иначе они попадут в «прошлые вердикты» и исказят следующие.
+        if not is_nrp:
+            save_tag = matched[0] if matched else "вердикт"
+            if not staff:
+                save_tag = f"игрок_{save_tag}"
+            fact_text = f"[ВЕРДИКТ] {text[:300]} → {verdict[:400]}"
+            await db.arun(db.add_fact, save_tag, fact_text, user.id, user.username or "", year, True)
+        await db.arun(db.inc_usage, user.id, today, "verdict")
+
+        if len(verdict) > 10000:
+            verdict = verdict[:10000] + "\n\n…[вердикт обрезан]"
+        await reply_llm(msg, verdict)
+    finally:
+        _busy_verdict.discard(user.id)
+        if status is not None:
+            try:
+                await status.delete()
+            except Exception:
+                pass
 
 
 # =====================================================================
-# ОСНОВНОЙ ОБРАБОТЧИК
+# ОСНОВНОЙ ОБРАБОТЧИК ТЕКСТА
 # =====================================================================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    msg = update.message
+    if not msg or not msg.text or not msg.from_user or msg.from_user.is_bot:
         return
-    text = update.message.text
-    chat_id = update.message.chat.id
+    text = msg.text
 
     if text.startswith("#"):
-        await save_fact_from_message(update, text)
+        await save_fact_from_message(update, context, text)
         return
 
-    is_private = update.message.chat.type == "private"
-    is_reply_to_bot = (
-        update.message.reply_to_message
-        and update.message.reply_to_message.from_user
-        and update.message.reply_to_message.from_user.id == context.bot.id
-    )
-    is_mention = (context.bot.username and f"@{context.bot.username.lower()}" in text.lower())
+    is_private = msg.chat.type == "private"
+    reply_to = msg.reply_to_message
+    is_reply_to_bot = bool(reply_to and reply_to.from_user and reply_to.from_user.id == context.bot.id)
+    is_mention = bool(context.bot.username and f"@{context.bot.username.lower()}" in text.lower())
 
     if not (is_private or is_reply_to_bot or is_mention):
         return
 
-    answer = await answer_question(update, text)
+    answer = await answer_question(update, context, text)
     if answer:
-        for part in split_text(answer, max_length=4000):
-            try:
-                await update.message.reply_text(part, parse_mode="Markdown")
-            except Exception:
-                await update.message.reply_text(part)
+        await reply_llm(msg, answer)
