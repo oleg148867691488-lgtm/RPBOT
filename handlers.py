@@ -1,13 +1,11 @@
 """
-HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ)
+HANDLERS.PY — ЛОГИКА РП-БОТА (ФИНАЛ + ТЕМЫ)
 =====================================
+- Поддержка тем (thread_id) в супергруппах
 - Время: 2 часа = месяц РП, 24 часа = год РП
 - Авто-NRP при #тег (отметка владельца)
-- Два чата: факты и мировые (приоритет у фактов)
-- Кэш админов групп
-- /bulk — массовый импорт
-- /verdict: 25/день игрокам (30 сек), 100/день админам (15 сек)
-- Ответ: база → World Bank → интернет → общие знания
+- Вердикты по реплаю и команде
+- Цепочка ответа: база → World Bank → интернет → знания
 """
 
 import re
@@ -117,8 +115,28 @@ def get_facts_chat_id() -> int:
     return FACTS_CHAT_ID
 
 
+def get_facts_thread_id() -> int:
+    saved = db.get_setting("facts_thread_id")
+    if saved:
+        try:
+            return int(saved)
+        except ValueError:
+            pass
+    return 0
+
+
 def get_world_chat_id() -> int:
     saved = db.get_setting("world_chat_id")
+    if saved:
+        try:
+            return int(saved)
+        except ValueError:
+            pass
+    return 0
+
+
+def get_world_thread_id() -> int:
+    saved = db.get_setting("world_thread_id")
     if saved:
         try:
             return int(saved)
@@ -441,21 +459,25 @@ async def maybe_summarize_history(chat_id: int, user_id: int):
 
 
 # =====================================================================
-# СОХРАНЕНИЕ ФАКТОВ (ПРИОРИТЕТ У ФАКТОВ)
+# СОХРАНЕНИЕ ФАКТОВ (С УЧЁТОМ ТЕМЫ)
 # =====================================================================
 
 async def save_fact_from_message(update: Update, text: str) -> bool:
     if not text.startswith("#"):
         return False
     chat_id = update.message.chat.id
+    thread_id = update.message.message_thread_id or 0
     user_id = update.message.from_user.id
     username = update.message.from_user.username or ""
 
     facts_chat = get_facts_chat_id()
+    facts_thread = get_facts_thread_id()
     world_chat = get_world_chat_id()
-    is_facts = (chat_id == facts_chat)
-    # Приоритет у фактов: если чат уже сохранён как факты, он НЕ считается мировым
-    is_world = (chat_id == world_chat) and world_chat != 0 and not is_facts
+    world_thread = get_world_thread_id()
+
+    is_facts = (chat_id == facts_chat) and (thread_id == facts_thread)
+    # Приоритет у фактов: если тема уже факты — она НЕ считается мировыми
+    is_world = (chat_id == world_chat) and (thread_id == world_thread) and not is_facts
 
     if not (is_facts or is_world or is_admin(user_id, username, chat_id)):
         return False
@@ -559,7 +581,7 @@ async def bulk_import(update: Update, text: str, is_world: bool = False) -> int:
 
 
 # =====================================================================
-# ОТВЕТ НА ВОПРОС (БАЗА → WB → ИНТЕРНЕТ → ОБЩИЕ ЗНАНИЯ)
+# ОТВЕТ НА ВОПРОС (БАЗА → WB → ИНТЕРНЕТ → ЗНАНИЯ)
 # =====================================================================
 
 async def answer_question(update: Update, text: str) -> str:
@@ -590,7 +612,6 @@ async def answer_question(update: Update, text: str) -> str:
 
     # ШАГ 3: приоритет источников
     if relevant_facts:
-        # Есть факты — используем ТОЛЬКО их
         facts_str = "\n".join([
             f"- [{f['tag']}] {f['text']}" + (f" (год: {f['year']})" if f['year'] else "")
             for f in relevant_facts[:20]
@@ -605,14 +626,12 @@ async def answer_question(update: Update, text: str) -> str:
         )
 
     elif wb_context:
-        # Фактов нет, но есть World Bank
         system_parts.append(
             f"В базе нет фактов, но есть данные World Bank:\n{wb_context}\n\n"
             f"Используй их и укажи источник как 'World Bank'."
         )
 
     else:
-        # ШАГ 4: идём в интернет
         search_result = await search_web(text)
         if search_result:
             system_parts.append(
@@ -621,7 +640,6 @@ async def answer_question(update: Update, text: str) -> str:
                 f"Ответь на основе этих результатов. Пометь ответ как '(из интернета)'."
             )
         else:
-            # ШАГ 5: общие знания LLM
             system_parts.append(
                 "В базе нет фактов, поиск в интернете не дал результатов.\n"
                 "Ответь на основе общих знаний (до 2020 года). "
@@ -668,7 +686,6 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⏳ Дневной лимит вердиктов исчерпан ({daily_limit}/{daily_limit}). Попробуй завтра.")
         return
 
-    # === ПАРСИНГ: реплай или команда ===
     raw = update.message.text or ""
     cmd_text = raw.replace("/verdict", "").strip()
     reply_text = ""
