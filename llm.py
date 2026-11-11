@@ -31,11 +31,24 @@ def clean(text: str) -> str:
     return text.strip()
 
 
+_LIMIT_RE = re.compile(r"Limit (\d+), Requested (\d+)")
+
+
+def _shrink(messages: list, ratio: float) -> list:
+    """Урезает хвост самого длинного сообщения, чтобы запрос влез в лимит токенов Groq."""
+    msgs = [dict(m) for m in messages]
+    idx = max(range(len(msgs)), key=lambda i: len(msgs[i]["content"]))
+    total = sum(len(m["content"]) for m in msgs)
+    content = msgs[idx]["content"]
+    keep = max(500, len(content) - int(total * (1 - ratio)))
+    msgs[idx]["content"] = content[:keep] + "\n[...часть данных обрезана из-за лимита токенов]"
+    return msgs
+
+
 async def call_groq(role: str, messages: list, temperature: float = 0.3):
     """role: 'main' | 'verdict' | 'summary'. Возвращает текст или None."""
     primary = C.PRIMARY_KEY.get(role)
-    keys = [k for k in [primary] + C.GROQ_KEYS if k]
-    keys = list(dict.fromkeys(keys))
+    keys = list(dict.fromkeys(k for k in [primary] + C.GROQ_KEYS if k))
     if not keys:
         log.warning("Groq: не задан ни один ключ GROQ_KEY_1..3")
         return None
@@ -43,36 +56,55 @@ async def call_groq(role: str, messages: list, temperature: float = 0.3):
     for model in C.MODELS.get(role, C.MODELS["main"]):
         if _dead_models.get(model, 0) > time.time():
             continue
-        for i, key in enumerate(keys, 1):
-            payload = {"model": model, "temperature": temperature, "messages": messages}
-            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-            try:
-                resp = await get_client().post(C.GROQ_URL, headers=headers, json=payload)
-            except httpx.HTTPError as e:
-                log.warning("Groq #%d (%s): сетевая ошибка %s", i, model, type(e).__name__)
-                continue
-
-            if resp.status_code == 200:
+        msgs = messages
+        for attempt in (1, 2):
+            shrink_ratio, model_dead = None, False
+            for i, key in enumerate(keys, 1):
+                payload = {"model": model, "temperature": temperature, "messages": msgs}
+                headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
                 try:
-                    content = clean(resp.json()["choices"][0]["message"].get("content") or "")
-                except (KeyError, IndexError, ValueError):
+                    resp = await get_client().post(C.GROQ_URL, headers=headers, json=payload)
+                except httpx.HTTPError as e:
+                    log.warning("Groq #%d (%s): сетевая ошибка %s", i, model, type(e).__name__)
                     continue
-                if content:
-                    return content
-                continue
 
-            body = resp.text[:300]
-            if resp.status_code in (400, 404) and "model" in body.lower():
-                _dead_models[model] = time.time() + 1800
-                log.error("Groq: модель %s недоступна (%s): %s. Пропускаю на 30 мин.",
-                          model, resp.status_code, body)
-                break  # к следующей модели
-            log.warning("Groq #%d (%s) status=%s: %s", i, model, resp.status_code, body)
+                if resp.status_code == 200:
+                    try:
+                        content = clean(resp.json()["choices"][0]["message"].get("content") or "")
+                    except (KeyError, IndexError, ValueError):
+                        continue
+                    if content:
+                        return content
+                    continue
+
+                body = resp.text[:400]
+                if resp.status_code in (400, 404) and "model" in body.lower():
+                    _dead_models[model] = time.time() + 1800
+                    log.error("Groq: модель %s недоступна (%s): %s. Пропускаю на 30 мин.",
+                              model, resp.status_code, body[:200])
+                    model_dead = True
+                    break
+                if resp.status_code == 413:
+                    # Запрос больше лимита токенов: у остальных ключей лимит такой же — не долбим их.
+                    m = _LIMIT_RE.search(body)
+                    shrink_ratio = min(0.9, int(m.group(1)) / int(m.group(2)) * 0.75) if m else 0.6
+                    log.warning("Groq (%s): запрос слишком большой (%s)", model, m.group(0) if m else "?")
+                    break
+                log.warning("Groq #%d (%s) status=%s: %s", i, model, resp.status_code, body[:200])
+
+            if model_dead or shrink_ratio is None or attempt == 2:
+                break
+            msgs = _shrink(messages, shrink_ratio)
+            log.info("Groq (%s): повторяю с урезанным запросом (x%.2f)", model, shrink_ratio)
     return None
 
 
+_gemini_dead_until = 0.0
+
+
 async def call_gemini(messages: list, temperature: float = 0.3):
-    if not C.GEMINI_KEY:
+    global _gemini_dead_until
+    if not C.GEMINI_KEY or time.time() < _gemini_dead_until:
         return None
     system_prompt, contents = "", []
     for m in messages:
@@ -97,7 +129,11 @@ async def call_gemini(messages: list, temperature: float = 0.3):
         if resp.status_code == 200:
             parts = resp.json()["candidates"][0]["content"]["parts"]
             return clean("".join(p.get("text", "") for p in parts)) or None
-        log.warning("Gemini status=%s: %s", resp.status_code, resp.text[:300])
+        if resp.status_code == 404:
+            _gemini_dead_until = time.time() + 1800
+            log.error("Gemini: модель %s недоступна. Задай актуальную в GEMINI_MODEL.", C.GEMINI_MODEL)
+        else:
+            log.warning("Gemini status=%s: %s", resp.status_code, resp.text[:300])
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as e:
         log.warning("Gemini ошибка: %s", type(e).__name__)
     return None

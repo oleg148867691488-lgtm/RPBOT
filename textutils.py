@@ -20,6 +20,18 @@ def shorten(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1].rstrip() + "…"
 
 
+def fit_texts(items: list, budget: int, per_item: int) -> list:
+    """Берёт строки по порядку важности, пока влезают в бюджет символов (каждую режет до per_item)."""
+    out, used = [], 0
+    for s in items:
+        s = shorten(s, per_item)
+        if used + len(s) + 1 > budget:
+            break
+        out.append(s)
+        used += len(s) + 1
+    return out
+
+
 def split_text(text: str, limit: int = 3500) -> list:
     """Режет длинный текст на части по абзацам/строкам/пробелам (без потери текста)."""
     text = (text or "").strip()
