@@ -175,6 +175,9 @@ async def save_fact_from_message(update: Update, context: ContextTypes.DEFAULT_T
     added = await db.arun(_store_fact, tags, fact_text, user.id, user.username or "", year, is_world)
 
     nrp = await quick_nrp_check(fact_text, year) if added else None
+    if added and not nrp:
+        from actions import analyze_fact           # ИИ-ГМ сам считает влияние новости на защиту страны
+        spawn(analyze_fact(msg, tags, fact_text, user))
     if nrp:
         warning = f"🚨 <b>NRP:</b> {esc(nrp)}"
         if C.RP_OWNER_USERNAME:

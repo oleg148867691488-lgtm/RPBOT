@@ -25,6 +25,8 @@ from telegram.ext import (
 import commands as cmd
 import config as C
 import database as db
+import events
+import gamecmds as gc
 import ui
 from handlers import handle_message, verdict_command
 from netclient import close_client, get_client
@@ -90,20 +92,28 @@ async def post_init(app: Application):
         BotCommand("verdict", "Вердикт по ситуации"),
         BotCommand("info", "Сводка по стране"),
         BotCommand("top", "Топ стран"),
+        BotCommand("vs", "Сравнить две страны"),
+        BotCommand("news", "Мировые новости"),
+        BotCommand("market", "Биржа"),
+        BotCommand("op", "Тайная операция"),
+        BotCommand("action", "Решение своей страны"),
+        BotCommand("timeline", "Хроника страны/темы"),
         BotCommand("year", "Дата в РП"),
         BotCommand("myid", "Мой ID"),
     ])
     if C.KEEPALIVE_URL:
         app.bot_data["keepalive_task"] = asyncio.create_task(keepalive())
         log.info("Keep-alive включён: %s", C.KEEPALIVE_URL)
+    app.bot_data["events_task"] = asyncio.create_task(events.scheduler(app.bot))
     me = await app.bot.get_me()
     log.info("✅ RP Bot запущен как @%s", me.username)
 
 
 async def post_shutdown(app: Application):
-    task = app.bot_data.get("keepalive_task")
-    if task:
-        task.cancel()
+    for name in ("keepalive_task", "events_task"):
+        task = app.bot_data.get(name)
+        if task:
+            task.cancel()
     await close_client()
     await db.arun(db.close_conn)
 
@@ -158,6 +168,18 @@ def main():
     # --- Публичные ---
     app.add_handler(CommandHandler(["start", "menu"], ui.menu_command))
     app.add_handler(CommandHandler("help", cmd.help_command))
+    app.add_handler(CommandHandler("timeline", ui.timeline_command))
+    app.add_handler(CommandHandler("vs", ui.vs_command))
+    app.add_handler(CommandHandler("op", gc.op_command))
+    app.add_handler(CommandHandler(["action", "do"], gc.action_command))
+    app.add_handler(CommandHandler("terror", gc.terror_command))
+    app.add_handler(CommandHandler("news", gc.news_command))
+    app.add_handler(CommandHandler("market", gc.market_command))
+    app.add_handler(CommandHandler("tension", gc.tension_command))
+    app.add_handler(CommandHandler("mycountry", gc.mycountry_command))
+    app.add_handler(CommandHandler("security", gc.security_command))
+    app.add_handler(CommandHandler("event", gc.event_command))
+    app.add_handler(CommandHandler("ops", gc.ops_command))
     app.add_handler(CommandHandler("verdict", verdict_command))
     app.add_handler(CommandHandler("info", cmd.info_command))
     app.add_handler(CommandHandler("top", cmd.top_command))

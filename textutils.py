@@ -167,3 +167,18 @@ class Cooldown:
 
     def reset(self, key):
         self._last.pop(key, None)
+
+
+def parse_json(text: str):
+    """Достаёт первый JSON-объект из ответа модели (даже если он в ```-блоке). Иначе None."""
+    import json
+    if not text:
+        return None
+    a, b = text.find("{"), text.rfind("}")
+    if a == -1 or b <= a:
+        return None
+    try:
+        data = json.loads(text[a:b + 1])
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None

@@ -15,6 +15,7 @@ DATABASE.PY — хранилище: Turso (libsql) или локальный SQL
 
 import asyncio
 import functools
+import json
 import logging
 import sqlite3
 import threading
@@ -131,12 +132,88 @@ def init_db():
         value TEXT NOT NULL
     )""")
     execute("""
+    CREATE TABLE IF NOT EXISTS world_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        country TEXT,
+        severity INTEGER DEFAULT 1,
+        text TEXT NOT NULL,
+        rp_year INTEGER
+    )""")
+    execute("""
+    CREATE TABLE IF NOT EXISTS ops (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        user_id INTEGER,
+        user_name TEXT,
+        actor TEXT,
+        target TEXT,
+        role TEXT,
+        budget INTEGER,
+        outcome TEXT,
+        revealed TEXT,
+        summary TEXT
+    )""")
+    execute("""
+    CREATE TABLE IF NOT EXISTS player_actions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        user_id INTEGER,
+        user_name TEXT,
+        country TEXT,
+        text TEXT,
+        summary TEXT,
+        effects TEXT
+    )""")
+    execute("""
     CREATE TABLE IF NOT EXISTS daily_usage (
         user_id INTEGER NOT NULL,
         day TEXT NOT NULL,
         kind TEXT NOT NULL,
         cnt INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (user_id, day, kind)
+    )""")
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS country_state (
+        country TEXT PRIMARY KEY,
+        stability INTEGER NOT NULL DEFAULT 60,
+        tension INTEGER NOT NULL DEFAULT 30,
+        security INTEGER NOT NULL DEFAULT 5
+    )""")
+    execute("""
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT NOT NULL,
+        countries TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        severity INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'draft',
+        effects TEXT,
+        secret TEXT,
+        actor_id INTEGER,
+        rp_date TEXT,
+        created_at TEXT NOT NULL
+    )""")
+    execute("CREATE INDEX IF NOT EXISTS idx_events_status ON events(status, id)")
+    execute("""
+    CREATE TABLE IF NOT EXISTS characters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        country TEXT NOT NULL,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        alive INTEGER NOT NULL DEFAULT 1
+    )""")
+    execute("CREATE TABLE IF NOT EXISTS player_country (user_id INTEGER PRIMARY KEY, country TEXT NOT NULL)")
+    execute("""
+    CREATE TABLE IF NOT EXISTS market (
+        symbol TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        price REAL NOT NULL,
+        history TEXT NOT NULL,
+        updated_at TEXT
     )""")
 
     # Уборка мусора: старые лимиты и архивная история
@@ -246,6 +323,15 @@ def get_recent_facts(tags: list, limit: int = 12, verdicts: bool = False) -> lis
     return execute(
         f"SELECT * FROM facts WHERE tag IN ({ph}) AND is_verdict = ? ORDER BY id DESC LIMIT ?",
         (*tags, 1 if verdicts else 0, limit),
+    )
+
+
+def get_timeline(tag: str, offset: int = 0, limit: int = 12) -> list:
+    """Записи тега по годам (без года — в конце)."""
+    return execute(
+        "SELECT id, text, year, is_verdict FROM facts WHERE tag = ? "
+        "ORDER BY CASE WHEN year IS NULL THEN 1 ELSE 0 END, year, id LIMIT ? OFFSET ?",
+        (tag.lower().strip(), limit, offset),
     )
 
 
@@ -414,3 +500,201 @@ def inc_usage(user_id: int, day: str, kind: str):
         "ON CONFLICT(user_id, day, kind) DO UPDATE SET cnt = cnt + 1",
         (user_id, day, kind),
     )
+
+
+# =====================================================================
+# СОСТОЯНИЕ СТРАН (ключ — код ISO3, например RUS)
+# =====================================================================
+
+_DEFAULT_STATE = {"stability": 60, "tension": 30, "security": 5}
+
+
+def get_state(iso: str) -> dict:
+    rows = execute("SELECT * FROM country_state WHERE country = ?", (iso,))
+    return rows[0] if rows else {"country": iso, **_DEFAULT_STATE}
+
+
+def all_states() -> list:
+    return execute("SELECT * FROM country_state")
+
+
+def _save_state(iso, stab, tens, sec):
+    execute(
+        "INSERT INTO country_state (country, stability, tension, security) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(country) DO UPDATE SET stability = excluded.stability, "
+        "tension = excluded.tension, security = excluded.security",
+        (iso, max(0, min(100, int(stab))), max(0, min(100, int(tens))), max(0, min(10, int(sec)))),
+    )
+
+
+def bump_state(iso: str, d_stab: int = 0, d_tens: int = 0, d_sec: int = 0):
+    with _lock:
+        st = get_state(iso)
+        _save_state(iso, st["stability"] + d_stab, st["tension"] + d_tens, st["security"] + d_sec)
+
+
+def set_security(iso: str, value: int):
+    with _lock:
+        st = get_state(iso)
+        _save_state(iso, st["stability"], st["tension"], value)
+
+
+def decay_states(with_security: bool = False):
+    """Стабильность и напряжённость медленно возвращаются к норме (60 / 30)."""
+    execute(
+        "UPDATE country_state SET "
+        "stability = CASE WHEN stability < 60 THEN MIN(60, stability + 2) "
+        "WHEN stability > 60 THEN MAX(60, stability - 2) ELSE 60 END, "
+        "tension = CASE WHEN tension > 30 THEN MAX(30, tension - 2) "
+        "WHEN tension < 30 THEN MIN(30, tension + 2) ELSE 30 END"
+    )
+    if with_security:
+        execute("UPDATE country_state SET security = CASE WHEN security > 5 THEN security - 1 "
+                "WHEN security < 5 THEN security + 1 ELSE 5 END")
+
+
+# =====================================================================
+# СОБЫТИЯ
+# =====================================================================
+
+def add_event(kind: str, countries: list, title: str, body: str, severity: int = 1,
+              status: str = "draft", effects: dict = None, secret: dict = None,
+              actor_id: int = None, rp_date: str = "") -> int:
+    with _lock:
+        execute(
+            "INSERT INTO events (kind, countries, title, body, severity, status, effects, secret, "
+            "actor_id, rp_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (kind, json.dumps(countries), title, body, severity, status,
+             json.dumps(effects or {}, ensure_ascii=False), json.dumps(secret or {}, ensure_ascii=False),
+             actor_id, rp_date, _now()),
+        )
+        rows = execute("SELECT last_insert_rowid() AS id")
+    return rows[0]["id"]
+
+
+def get_event(event_id: int):
+    rows = execute("SELECT * FROM events WHERE id = ?", (event_id,))
+    return rows[0] if rows else None
+
+
+def set_event_status(event_id: int, status: str):
+    execute("UPDATE events SET status = ? WHERE id = ?", (status, event_id))
+
+
+def list_events(status: str = "published", limit: int = 5, offset: int = 0) -> list:
+    return execute("SELECT * FROM events WHERE status = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+                   (status, limit, offset))
+
+
+def count_events(status: str = "published") -> int:
+    rows = execute("SELECT COUNT(*) AS c FROM events WHERE status = ?", (status,))
+    return rows[0]["c"] if rows else 0
+
+
+def recent_events(limit: int = 10) -> list:
+    return execute("SELECT * FROM events WHERE status = 'published' ORDER BY id DESC LIMIT ?", (limit,))
+
+
+def list_user_ops(user_id: int, limit: int = 5) -> list:
+    return execute("SELECT * FROM events WHERE actor_id = ? AND substr(kind, 1, 3) = 'op_' "
+                   "ORDER BY id DESC LIMIT ?", (user_id, limit))
+
+
+# =====================================================================
+# ПЕРСОНАЖИ РП, СТРАНЫ ИГРОКОВ
+# =====================================================================
+
+def add_character(country: str, name: str, role: str) -> int:
+    with _lock:
+        execute("INSERT INTO characters (country, name, role, alive) VALUES (?, ?, ?, 1)", (country, name, role))
+        rows = execute("SELECT last_insert_rowid() AS id")
+    return rows[0]["id"]
+
+
+def list_characters(country: str = None, alive_only: bool = True) -> list:
+    sql, params = "SELECT * FROM characters WHERE 1 = 1", []
+    if country:
+        sql += " AND country = ?"
+        params.append(country)
+    if alive_only:
+        sql += " AND alive = 1"
+    return execute(sql + " ORDER BY id", tuple(params))
+
+
+def kill_character(char_id: int) -> bool:
+    rows = execute("SELECT id FROM characters WHERE id = ?", (char_id,))
+    if not rows:
+        return False
+    execute("UPDATE characters SET alive = 0 WHERE id = ?", (char_id,))
+    return True
+
+
+def set_player_country(user_id: int, country: str):
+    execute("INSERT INTO player_country (user_id, country) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET country = excluded.country", (user_id, country))
+
+
+def get_player_country(user_id: int):
+    rows = execute("SELECT country FROM player_country WHERE user_id = ?", (user_id,))
+    return rows[0]["country"] if rows else None
+
+
+# =====================================================================
+# СОБЫТИЯ МИРА И ОПЕРАЦИИ
+# =====================================================================
+
+def add_world_event(kind: str, country: str, severity: int, text: str, rp_year: int = None) -> int:
+    with _lock:
+        execute(
+            "INSERT INTO world_events (ts, kind, country, severity, text, rp_year) VALUES (?, ?, ?, ?, ?, ?)",
+            (_now(), kind, country, severity, text, rp_year),
+        )
+        rows = execute("SELECT last_insert_rowid() AS id")
+    return rows[0]["id"] if rows else 0
+
+
+def _kinds_sql(kinds):
+    if not kinds:
+        return "", ()
+    return f" WHERE kind IN ({','.join('?' * len(kinds))})", tuple(kinds)
+
+
+def get_world_events(limit: int = 4, offset: int = 0, kinds=None) -> list:
+    where, params = _kinds_sql(kinds)
+    return execute(f"SELECT * FROM world_events{where} ORDER BY id DESC LIMIT ? OFFSET ?", (*params, limit, offset))
+
+
+def count_world_events(kinds=None) -> int:
+    where, params = _kinds_sql(kinds)
+    rows = execute(f"SELECT COUNT(*) AS c FROM world_events{where}", params)
+    return rows[0]["c"] if rows else 0
+
+
+def add_op(user_id, user_name, actor, target, role, budget, outcome, revealed, summary) -> int:
+    with _lock:
+        execute(
+            "INSERT INTO ops (ts, user_id, user_name, actor, target, role, budget, outcome, revealed, summary) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (_now(), user_id, user_name, actor, target, role, budget, outcome, revealed, summary),
+        )
+        rows = execute("SELECT last_insert_rowid() AS id")
+    return rows[0]["id"] if rows else 0
+
+
+def get_ops(limit: int = 10) -> list:
+    return execute("SELECT * FROM ops ORDER BY id DESC LIMIT ?", (limit,))
+
+
+def add_player_action(user_id, user_name, country, text, summary, effects_json) -> int:
+    with _lock:
+        execute(
+            "INSERT INTO player_actions (ts, user_id, user_name, country, text, summary, effects) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (_now(), user_id, user_name, country, text, summary, effects_json),
+        )
+        rows = execute("SELECT last_insert_rowid() AS id")
+    return rows[0]["id"] if rows else 0
+
+
+def get_player_actions(country: str, limit: int = 3) -> list:
+    return execute("SELECT * FROM player_actions WHERE country = ? ORDER BY id DESC LIMIT ?", (country, limit))

@@ -210,3 +210,57 @@ async def fetch_top(code: str, year: int, count: int):
             rows.sort(key=lambda r: r["value"], reverse=True)
             return rows[:count], y
     return [], year
+
+
+# ---------------------------------------------------------------------
+# СРАВНЕНИЕ СТРАН (/vs)
+# ---------------------------------------------------------------------
+
+ISO_RU = {}
+for _k, _iso in COUNTRIES.items():
+    if _iso not in ISO_RU and re.search(r"[а-яё]", _k):
+        ISO_RU[_iso] = _k.upper() if len(_k) <= 3 else _k.capitalize()
+
+# (подпись, код, тип, что лучше: high/low)
+VS_METRICS = [
+    ("ВВП", "NY.GDP.MKTP.CD", "usd", "high"),
+    ("На душу", "NY.GDP.PCAP.CD", "usd_pc", "high"),
+    ("Население", "SP.POP.TOTL", "people", "high"),
+    ("Воен.расх.", "MS.MIL.XPND.CD", "usd", "high"),
+    ("Воен.% ВВП", "MS.MIL.XPND.GD.ZS", "pct", "high"),
+    ("Инфляция", "FP.CPI.TOTL.ZG", "pct", "low"),
+    ("Безработ.", "SL.UEM.TOTL.ZS", "pct", "low"),
+    ("Жизнь, лет", "SP.DYN.LE00.IN", "years", "high"),
+]
+
+
+def find_countries(text: str) -> list:
+    """Все страны из текста в порядке упоминания: ['RUS', 'USA']."""
+    t = (text or "").lower()
+    taken, found = [], []
+    for pat, iso in _COUNTRY_PATTERNS:  # длинные ключи первыми
+        for m in pat.finditer(t):
+            if any(not (m.end() <= a or m.start() >= b) for a, b in taken):
+                continue
+            taken.append((m.start(), m.end()))
+            found.append((m.start(), iso))
+    out = []
+    for _, iso in sorted(found):
+        if iso not in out:
+            out.append(iso)
+    return out
+
+
+async def fetch_value(iso3: str, code: str, year: int = None):
+    """(значение, год) последнего доступного значения не позже year, либо None."""
+    last = year or datetime.now().year
+    data = await _get_json(
+        f"{WB}/country/{iso3}/indicator/{code}",
+        {"format": "json", "per_page": 30, "date": f"{last - 8}:{last}"},
+    )
+    if not isinstance(data, list) or len(data) < 2 or not data[1]:
+        return None
+    for rec in data[1]:
+        if rec.get("value") is not None:
+            return rec["value"], str(rec["date"])
+    return None

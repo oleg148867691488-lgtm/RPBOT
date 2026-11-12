@@ -89,3 +89,22 @@ RP_DAYS_PER_REAL_HOUR = 365 / 24
 
 # Keep-alive для бесплатного Render (пингует сам себя). Обычно берётся автоматически.
 KEEPALIVE_URL = os.getenv("KEEPALIVE_URL") or os.getenv("RENDER_EXTERNAL_URL")
+
+# === МИРОВЫЕ СОБЫТИЯ И ОПЕРАЦИИ ===
+EVENTS_TICK = _int("EVENTS_TICK", 600)               # как часто «тикает» мир (сек)
+OP_COOLDOWN_PLAYER = _float("OP_COOLDOWN_PLAYER", 600.0)
+OP_COOLDOWN_STAFF = _float("OP_COOLDOWN_STAFF", 60.0)
+OP_LIMIT_PLAYER = _int("OP_LIMIT_PLAYER", 3)         # операций в сутки
+OP_LIMIT_STAFF = _int("OP_LIMIT_STAFF", 20)
+
+# === ДЕЙСТВИЯ СТРАН (/action) ===
+ACTION_COOLDOWN_PLAYER = _float("ACTION_COOLDOWN_PLAYER", 90.0)
+ACTION_COOLDOWN_STAFF = _float("ACTION_COOLDOWN_STAFF", 10.0)
+ACTION_LIMIT_PLAYER = _int("ACTION_LIMIT_PLAYER", 8)     # принятых действий в сутки
+ACTION_LIMIT_STAFF = _int("ACTION_LIMIT_STAFF", 50)
+
+# === ТЕРАКТЫ (/terror, только в личке) ===
+TERROR_COOLDOWN_PLAYER = _float("TERROR_COOLDOWN_PLAYER", 1800.0)
+TERROR_COOLDOWN_STAFF = _float("TERROR_COOLDOWN_STAFF", 60.0)
+TERROR_LIMIT_PLAYER = _int("TERROR_LIMIT_PLAYER", 1)     # заказов в сутки
+TERROR_LIMIT_STAFF = _int("TERROR_LIMIT_STAFF", 10)
