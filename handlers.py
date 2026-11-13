@@ -13,6 +13,7 @@ HANDLERS.PY — логика РП-бота: факты (#теги), вопрос
 import asyncio
 import logging
 import re
+import time
 from datetime import datetime, timezone
 
 from telegram import Update
@@ -553,6 +554,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg or not msg.text or not msg.from_user or msg.from_user.is_bot:
         return
     text = msg.text
+
+    if msg.chat.type == "private" and not text.startswith("#"):
+        pend = context.user_data.get("pending_order")          # (режим, время, уже сказанное)
+        if pend and time.time() - pend[1] < 600:
+            context.user_data.pop("pending_order", None)
+            from gamecmds import order_from_text
+            await order_from_text(update, context, pend[0], (pend[2] + "\n" + text).strip())
+            return
 
     if text.startswith("#"):
         await save_fact_from_message(update, context, text)

@@ -78,16 +78,18 @@ def parse_op(text: str, default_actor: str = None):
             "group": GROUP_OF.get(role[0], "gov")}, None
 
 
-def resolve(budget: int, security: float, intel: float = 0.0, rng=random) -> dict:
+def resolve(budget: int, security: float, intel: float = 0.0, pq: float = 50.0, war: bool = False, rng=random) -> dict:
     """Чистая механика (без БД и сети). intel — разведка страны-заказчика (0..30)."""
     bf = min(1.0, math.log10(budget / 1e4 + 1) / 2.0)
-    p_ok = min(0.8, max(0.02, 0.05 + 0.6 * bf * (1 - security / 120) + intel * 0.004))
+    p_ok = min(0.8, max(0.02, 0.05 + 0.6 * bf * (1 - security / 120) + intel * 0.004 + (pq - 50) * 0.003))
+    if war:
+        p_ok = min(0.85, p_ok * 1.15)
     p_hurt = min(0.25, p_ok * 0.8)
     r = rng.random()
     outcome = "killed" if r < p_ok else "wounded" if r < p_ok + p_hurt else "failed"
     p_caught = {"killed": 0.10 + security / 250, "wounded": 0.25 + security / 250,
                 "failed": 0.40 + security / 200}[outcome]
-    caught = rng.random() < min(0.9, max(0.02, p_caught - intel / 300))
+    caught = rng.random() < min(0.9, max(0.02, p_caught - intel / 300 - (pq - 50) * 0.002))
     revealed = "none"
     if caught:
         x = rng.random()
@@ -252,15 +254,17 @@ def terror_category(low: str) -> str:
     return random.choice(sorted({lbl for _, lbl in CATEGORIES}))
 
 
-def resolve_terror(budget: int, security: float, intel: float = 0.0, rng=random) -> dict:
+def resolve_terror(budget: int, security: float, intel: float = 0.0, pq: float = 50.0, war: bool = False, rng=random) -> dict:
     bf = min(1.0, math.log10(budget / 5e3 + 1) / 2.2)
-    p_major = min(0.7, max(0.02, 0.04 + 0.5 * bf * (1 - security / 110) + intel * 0.003))
+    p_major = min(0.7, max(0.02, 0.04 + 0.5 * bf * (1 - security / 110) + intel * 0.003 + (pq - 50) * 0.003))
+    if war:
+        p_major = min(0.75, p_major * 1.2)
     p_partial = min(0.3, p_major * 1.2)
     r = rng.random()
     outcome = "major" if r < p_major else "partial" if r < p_major + p_partial else "foiled"
     p_caught = {"major": 0.20 + security / 250, "partial": 0.35 + security / 250,
                 "foiled": 0.55 + security / 200}[outcome]
-    caught = rng.random() < min(0.92, max(0.02, p_caught - intel / 300))
+    caught = rng.random() < min(0.92, max(0.02, p_caught - intel / 300 - (pq - 50) * 0.002))
     revealed = "none"
     if caught:
         x = rng.random()

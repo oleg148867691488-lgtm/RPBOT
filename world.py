@@ -167,3 +167,31 @@ def decay_cstate(allst: dict, factor: float = 0.998):
 
 def save_cstate_all(allst: dict):
     db.set_setting("cstate", json.dumps(allst))
+
+
+# ---------------- войны ----------------
+
+def wars() -> list:
+    return [tuple(p) for p in _load("wars", []) if len(p) == 2]
+
+
+def at_war(iso: str) -> bool:
+    return any(iso in p for p in wars())
+
+
+def add_war(a: str, b: str) -> bool:
+    w = wars()
+    if (a, b) in w or (b, a) in w:
+        return False
+    w.append((a, b))
+    db.set_setting("wars", json.dumps(w))
+    return True
+
+
+def end_war(a: str, b: str) -> bool:
+    w = wars()
+    new = [p for p in w if set(p) != {a, b}]
+    if len(new) == len(w):
+        return False
+    db.set_setting("wars", json.dumps(new))
+    return True
