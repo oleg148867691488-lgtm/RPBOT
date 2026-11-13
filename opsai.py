@@ -32,7 +32,8 @@ CATS = ["транспортный объект", "государственное
         "людное общественное место", "должностное лицо"]
 TIER_MOD = {1: -15, 2: 0, 3: 12, 4: 25}
 TIER_RU = {1: "низкая", 2: "средняя", 3: "высокая", 4: "очень высокая"}
-OUT_RU = {"major": "крупный теракт", "partial": "ограниченный теракт", "foiled": "теракт предотвращён",
+OUT_RU = {"major": "крупный теракт (доведён до конца)", "partial": "ограниченный теракт (остановлен силовиками)",
+          "foiled": "теракт предотвращён: ячейку вскрыли до нападения",
           "killed": "цель устранена", "wounded": "цель ранена", "failed": "покушение сорвано"}
 ICON = {"major": "💥", "partial": "🔸", "foiled": "🛑", "killed": "✅", "wounded": "🩹", "failed": "❌"}
 
@@ -305,8 +306,13 @@ def scrub_numbers(text: str) -> str:
     return " ".join(p for p in parts if not _NUM_PEOPLE.search(p)).strip()
 
 
-def info_block(terror: bool, n: int, fate: tuple, cas: dict) -> str:
+def info_block(terror: bool, n: int, fate: tuple, cas: dict, outcome: str = "") -> str:
     k_att, arrested, escaped = fate
+    if outcome == "foiled":                       # ячейку взяли ДО нападения: людей на цели не было
+        sub = [x for x in (f"задержано {arrested}" if arrested else "",
+                           f"ликвидировано при задержании {k_att}" if k_att else "",
+                           f"скрылись {escaped}" if escaped else "") if x]
+        return f"Участников ячейки: {n}" + (f" ({', '.join(sub)})" if sub else "") + ". Нападение не состоялось, жертв нет."
     sub = [x for x in (f"погибло/ликвидировано {k_att}" if k_att else "", f"задержано {arrested}" if arrested else "",
                        f"скрылись {escaped}" if escaped else "") if x]
     line = f"{'Нападавших' if terror else 'Исполнителей'}: {n}" + (f" ({', '.join(sub)})" if sub else "") + "."
@@ -366,20 +372,29 @@ async def execute_attack(bot, user, spec: dict, chat_id: int = None, thread_id: 
     place = f" ({spec['place']})" if spec["place"] else ""
     ctx = await build_context(target)
     fate_words = ", ".join(x for x in (
+        "часть ликвидирована при задержании" if fate[0] and outcome == "foiled" else
         "часть исполнителей ликвидирована" if fate[0] and style != "смертник" else
         "исполнитель(и) погибли при совершении акта" if fate[0] else "",
         "часть задержана" if fate[1] else "", "часть скрылась" if fate[2] else "") if x) or "судьба неизвестна"
     att_word = "один исполнитель" if n == 1 else "небольшая группа" if n <= 8 else "многочисленная группа"
     if terror:
         brief = ("террористический акт" if outcome != "foiled"
-                 else "предотвращённый теракт: исполнителей остановили до начала или в самом начале")
+                 else "предотвращённый теракт: ячейку вскрыли на стадии подготовки")
         task = (f"Событие: {brief}. Место: {where}{place}; тип объекта: {spec['category']}. Итог: {OUT_RU[outcome]}. "
                 f"Масштаб: {_scale_word(cas['killed'], cas['wounded'])}. Исполнители: {att_word}; {fate_words}. "
                 f"Информация о причастных: {trail}.")
+        if outcome == "foiled":
+            task += (" Нападение НЕ состоялось: ячейку вскрыли на стадии подготовки, до выхода на цель; на объекте ничего "
+                     "не произошло и нападавших среди людей не было. Расскажи общими словами, как вскрыли (оперативные "
+                     "данные, наблюдение), без технических деталей.")
+        elif outcome == "partial":
+            task += " Нападение началось, но силовики быстро остановили нападавших."
     else:
         task = (f"Событие: покушение на должностное лицо ({spec['role_label']}) страны {tn}. "
                 f"Итог: {OUT_RU[outcome]}. Масштаб потерь среди охраны и прохожих: "
                 f"{_scale_word(cas['killed'], cas['wounded'])}. Информация о причастных: {trail}.")
+    if not terror and outcome == "failed":
+        task += " Цель не пострадала: опиши общими словами, как покушение было сорвано."
     task += (f"\nКонтекст мира (согласуйся с ним):\n{ctx}\nНапиши новостную заметку-сводку: где и что произошло "
              "(без способов исполнения), реакция властей. НЕ называй никаких чисел людей. Должность без имени. "
              "Не называй заказчика, если это не сказано выше.")
@@ -390,7 +405,7 @@ async def execute_attack(bot, user, spec: dict, chat_id: int = None, thread_id: 
     head, body = split_headline(text)
     if not body:
         head, body = ("Теракт" if terror else "Покушение"), head
-    body = (scrub_numbers(body) + "\n\n" + info_block(terror, n, fate, cas)).strip()
+    body = (scrub_numbers(body) + "\n\n" + info_block(terror, n, fate, cas, outcome)).strip()
 
     kind = "terror" if terror else "attack"
     heavy = (not terror) and spec["role_mod"] >= 20
@@ -439,7 +454,8 @@ async def execute_attack(bot, user, spec: dict, chat_id: int = None, thread_id: 
                    f"{esc(where)}{esc(place)} · {esc(spec['category'])}")
     fate_txt = " · ".join(x for x in (f"погибло {fate[0]}" if fate[0] else "", f"задержано {fate[1]}" if fate[1] else "",
                                       f"скрылось {fate[2]}" if fate[2] else "") if x) or "—"
-    people = (f"👥 Исполнителей: <b>{n}</b> ({esc(style)}) · {fate_txt}"
+    people = (f"👥 {'Участников ячейки' if outcome == 'foiled' else 'Исполнителей'}: <b>{n}</b> ({esc(style)}) · {fate_txt}"
+              + ("\n      🛑 <i>Ячейку вскрыли до нападения — на цель никто не вышел.</i>" if outcome == "foiled" else "")
               + (f"\n      ⚠️ <i>Чем больше людей, тем труднее сохранить тайну (−{secrecy:.0f} к оценке плана)</i>"
                  if secrecy >= 1 else ""))
     loss = (f"💥 Потери: погибших <b>{cas['killed']}</b>, раненых <b>{cas['wounded']}</b>"
