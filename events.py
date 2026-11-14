@@ -58,6 +58,7 @@ EVENTS = {
 EMOJI = {k: v["emoji"] for k, v in EVENTS.items()}
 EMOJI["attack"] = "🎯"
 EMOJI["decree"] = "🏛"
+EMOJI["military"] = "🚀"
 
 ALIASES = {
     "теракт": "terror", "терракт": "terror", "кибер": "cyber", "хакер": "cyber", "взлом": "cyber",
@@ -231,7 +232,7 @@ def split_headline(text: str):
 
 def format_event(kind: str, isos: list, rp: dict, head: str, body: str, market_line: str = "") -> str:
     ev = EVENTS.get(kind)
-    title = f"{ev['emoji']} {ev['name']}" if ev else {"attack": "🎯 Покушение", "decree": "🏛 Решение власти"}.get(kind, "📰 Событие")
+    title = f"{ev['emoji']} {ev['name']}" if ev else {"attack": "🎯 Покушение", "decree": "🏛 Решение власти", "military": "🚀 Военный удар"}.get(kind, "📰 Событие")
     where = " ↔ ".join(esc(_name(i)) for i in isos)
     when = f" · 📅 {rp['full']}" if rp.get("full") else ""
     out = f"🎭 <b>РП-СОБЫТИЕ · {title}</b>\n📍 {where}{when}\n\n<b>{esc(head)}</b>\n{esc(body)}"
@@ -359,6 +360,7 @@ FOLLOW = {
     "incident": [("propaganda", 0.6), ("market", 0.4)],
     "shock": [("market", 0.8), ("strike", 0.4), ("protest", 0.5)],
     "cyber": [("market", 0.2)],
+    "military": [("propaganda", 0.7), ("market", 0.7), ("protest", 0.4), ("incident", 0.5)],
 }
 
 
