@@ -261,6 +261,7 @@ async def admin_screen(user):
         [B("📍 Где храним?", callback_data="ui:wh"), B("👥 Админы", callback_data="ui:ads")],
         [B("📥 Импорт", callback_data="ui:im"), B("📦 Экспорт", callback_data="ui:ex")],
         [B("🎲 События мира", callback_data="ui:ev"), B("📜 Журнал ГМ", callback_data="ui:ol")],
+        [B("↩️ Откат новости", callback_data="ui:rb:0")],
         [B("🧹 Очистить мою историю", callback_data="ui:ch")],
     ]
     if is_owner(user.id):
@@ -314,7 +315,7 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     await q.answer(toast)
 
-    staff_only = {"ad", "st", "wh", "sf", "sw", "ads", "ex", "im", "ch", "ft", "df", "dy", "ev", "evm", "evr", "ol"}
+    staff_only = {"ad", "st", "wh", "sf", "sw", "ads", "ex", "im", "ch", "ft", "df", "dy", "ev", "evm", "evr", "ol", "rb", "rby", "rbn"}
     if (kind in staff_only and not staff) or (kind in ("dz", "cy") and not owner):
         await edit_html(q, "❌ Доступ закрыт.", kb(HOME))
         return
@@ -420,6 +421,17 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif kind == "ol":
         text, markup = await ops_log_screen()
         await edit_html(q, text, markup)
+
+    elif kind == "rb":
+        text, markup = await rollback_screen(int(p[2]) if len(p) > 2 and p[2].isdigit() else 0)
+        await edit_html(q, text, markup)
+
+    elif kind == "rbn":
+        await edit_html(q, "↩️ Откат отменён.", kb([B("🏠 Меню", callback_data="ui:home")]))
+
+    elif kind == "rby":
+        result = await world.rollback_event(int(p[2]))
+        await edit_html(q, result, kb([B("↩️ Ещё откат", callback_data="ui:rb:0")], HOME))
 
     elif kind == "vd":
         text, markup = await verdict_screen(user)
@@ -653,7 +665,10 @@ async def news_screen(f: str = "a", page: int = 0):
 def market_screen():
     m = world.market()
     lines = ["📈 <b>БИРЖА</b> <i>(игровые котировки)</i>", ""]
+    year = get_rp_datetime().get("year") or 2010
     for k, (name, _s, _v, _d) in world.ASSETS.items():
+        if not world.asset_active(k, year):          # в 1918-м нет ни биткоина, ни EUR/USD
+            continue
         h = m["h"][k]
         ch = world.change_pct(h)
         arrow = "🟢▲" if ch > 0.05 else "🔴▼" if ch < -0.05 else "⚪️▬"
@@ -752,3 +767,33 @@ async def country_screen(user):
     lines += ["", "<i>Усилить: <code>/action усилил охрану президента</code>. Усиления слабеют со временем, "
                   "а нейросеть-ГМ оценивает реализм.</i>"]
     return "\n".join(lines), kb([B("🔄 Обновить", callback_data="ui:mc")], HOME)
+
+
+async def rollback_screen(offset: int = 0):
+    """«Откатить эту новость? Да / Нет» — листай кнопками к более старым новостям."""
+    import json as _json
+    offset = max(0, offset)
+    rows = await db.arun(db.get_world_events, 1, offset, None)
+    if not rows:
+        return "↩️ <b>ОТКАТ</b>\n\nОткатывать нечего — в ленте нет новостей.", kb(HOME)
+    r = rows[0]
+    head, _, body = r["text"].partition("\n")
+    try:
+        eff = _json.loads(r.get("effects") or "{}")
+    except ValueError:
+        eff = {}
+    lines = ["↩️ <b>Откатить эту новость?</b>", "",
+             f"{EMOJI.get(r['kind'], '📰')} <b>{esc(head)}</b>", esc(shorten(body, 320)),
+             f"<i>📍 {esc(ISO_RU.get(r['country'], r['country'] or ''))} · {r['rp_year'] or ''} · #{r['id']}</i>", ""]
+    if eff:
+        bits = [f"🌡 {esc(ISO_RU.get(i, i))} {-d:+.0f}" for i, d in list(eff.get("tension", {}).items())[:4]]
+        bits += [f"{world.ASSETS[a][0]} {(-s * 100):+.1f}%" for a, s in eff.get("market", {}).items() if a in world.ASSETS]
+        lines.append("<b>Будет отменено:</b> " + (" · ".join(bits) or "—"))
+    else:
+        lines.append("<i>Для старой новости откатятся только лента и мировой факт.</i>")
+    nav = []
+    if offset > 0:
+        nav.append(B("◀️ Новее", callback_data=f"ui:rb:{offset - 1}"))
+    nav.append(B("Старше ▶️", callback_data=f"ui:rb:{offset + 1}"))
+    return "\n".join(lines), kb([B("✅ Да, откатить", callback_data=f"ui:rby:{r['id']}"),
+                                 B("❌ Нет", callback_data="ui:rbn")], nav, HOME)

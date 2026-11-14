@@ -139,7 +139,8 @@ def init_db():
         country TEXT,
         severity INTEGER DEFAULT 1,
         text TEXT NOT NULL,
-        rp_year INTEGER
+        rp_year INTEGER,
+        effects TEXT
     )""")
     execute("""
     CREATE TABLE IF NOT EXISTS ops (
@@ -223,6 +224,10 @@ def init_db():
     old_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(timespec="seconds")
     execute("DELETE FROM history WHERE is_archived = 1 AND created_at < ?", (old_ts,))
 
+    try:                                      # старые базы: добавляем колонку эффектов (нужна для отката)
+        execute("ALTER TABLE world_events ADD COLUMN effects TEXT")
+    except Exception:
+        pass
     load_settings()
 
 
@@ -643,11 +648,11 @@ def get_player_country(user_id: int):
 # СОБЫТИЯ МИРА И ОПЕРАЦИИ
 # =====================================================================
 
-def add_world_event(kind: str, country: str, severity: int, text: str, rp_year: int = None) -> int:
+def add_world_event(kind: str, country: str, severity: int, text: str, rp_year: int = None, effects: str = None) -> int:
     with _lock:
         execute(
-            "INSERT INTO world_events (ts, kind, country, severity, text, rp_year) VALUES (?, ?, ?, ?, ?, ?)",
-            (_now(), kind, country, severity, text, rp_year),
+            "INSERT INTO world_events (ts, kind, country, severity, text, rp_year, effects) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (_now(), kind, country, severity, text, rp_year, effects),
         )
         rows = execute("SELECT last_insert_rowid() AS id")
     return rows[0]["id"] if rows else 0
@@ -698,3 +703,17 @@ def add_player_action(user_id, user_name, country, text, summary, effects_json) 
 
 def get_player_actions(country: str, limit: int = 3) -> list:
     return execute("SELECT * FROM player_actions WHERE country = ? ORDER BY id DESC LIMIT ?", (country, limit))
+
+
+def get_world_event(event_id: int):
+    rows = execute("SELECT * FROM world_events WHERE id = ?", (event_id,))
+    return rows[0] if rows else None
+
+
+def delete_world_event(event_id: int):
+    execute("DELETE FROM world_events WHERE id = ?", (event_id,))
+
+
+def delete_fact_by_text(tag: str, text: str):
+    execute("DELETE FROM facts WHERE tag = ? AND text = ?", (tag.lower().strip(), text))
+    _invalidate_tags()

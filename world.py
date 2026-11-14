@@ -10,6 +10,7 @@ import math
 import random
 
 import database as db
+from textutils import shorten
 
 state_lock = asyncio.Lock()   # общий замок на изменение состояния мира (события, операции, тики)
 
@@ -21,7 +22,21 @@ ASSETS = {
     "eurusd": ("💶 EUR/USD", 1.30, 0.004, 3),
     "usdcny": ("💴 USD/CNY", 6.80, 0.002, 3),
     "crypto": ("₿ Криптобиржа", 100.0, 0.045, 1),
+    "silver": ("🥈 Серебро", 18.0, 0.01, 2),
+    "stocks": ("📈 Фондовый индекс", 100.0, 0.01, 0),
 }
+# с какого года актив существует (в 1918-м не бывает биткоина и EUR/USD)
+ASSET_FROM = {"oil": 1870, "gold": 0, "silver": 0, "stocks": 1896, "usdrub": 1992, "eurusd": 1999,
+              "usdcny": 1994, "crypto": 2009}
+
+
+def current_year() -> int:
+    from rptime import get_rp_datetime
+    return get_rp_datetime().get("year") or 2010
+
+
+def asset_active(key: str, year: int = None) -> bool:
+    return ASSET_FROM.get(key, 0) <= (year or current_year())
 CURRENCY_OF = {"RUS": "usdrub", "CHN": "usdcny", "DEU": "eurusd", "FRA": "eurusd",
                "ITA": "eurusd", "ESP": "eurusd", "NLD": "eurusd", "FIN": "eurusd", "GRC": "eurusd"}
 SPARK = "▁▂▃▄▅▆▇█"
@@ -50,7 +65,7 @@ def market() -> dict:
 
 
 def tick_market(m: dict, shocks: dict = None) -> dict:
-    shocks = shocks or {}
+    shocks = {a: v for a, v in (shocks or {}).items() if asset_active(a)}   # шоки только для существующих в эпоху активов
     for k, (_n, start, vol, _d) in ASSETS.items():
         v = m["v"][k] * math.exp(random.gauss(0, vol)) * (1 + shocks.get(k, 0.0))
         v += (start - v) * 0.002          # слабая тяга к стартовому уровню
@@ -195,3 +210,58 @@ def end_war(a: str, b: str) -> bool:
         return False
     db.set_setting("wars", json.dumps(new))
     return True
+
+
+# ---------------- эффекты события и откат ----------------
+
+def effects_json(t0: dict, t1: dict, scaled: dict, cs_changes: dict) -> str:
+    """Что событие изменило в мире — чтобы его можно было откатить."""
+    dt = {k: round(t1.get(k, 0) - t0.get(k, 0), 2) for k in set(t0) | set(t1) if abs(t1.get(k, 0) - t0.get(k, 0)) > 0.01}
+    return json.dumps({"tension": dt, "market": {a: round(v, 4) for a, v in scaled.items()},
+                       "cstate": {i: {k: v for k, v in d.items() if v} for i, d in cs_changes.items()}},
+                      ensure_ascii=False)
+
+
+def _rollback_db(row, fact_tag, fact_text, t, m, cs_all):
+    db.delete_world_event(row["id"])
+    if fact_tag:
+        db.delete_fact_by_text(fact_tag, fact_text)
+    save_tension(t)
+    save_market(m)
+    save_cstate_all(cs_all)
+
+
+async def rollback_event(event_id: int) -> str:
+    """Убирает новость из ленты и мировых фактов и отменяет её последствия (напряжённость, биржа, защита)."""
+    from worldbank import ISO_RU
+    row = await db.arun(db.get_world_event, event_id)
+    if not row:
+        return "❌ Новость уже удалена или не найдена."
+    try:
+        eff = json.loads(row.get("effects") or "{}")
+    except ValueError:
+        eff = {}
+    head, _, body = (row["text"] or "").partition("\n")
+    country = row.get("country") or ""
+    fact_tag = f"world_{ISO_RU.get(country, country).lower()}" if country else ""
+    async with state_lock:
+        t = tension()
+        for iso, d in eff.get("tension", {}).items():
+            bump(t, iso, -d)
+        m = market()
+        for a, s in eff.get("market", {}).items():
+            if a in m["v"] and s > -0.99:
+                m["v"][a] = round(m["v"][a] / (1 + s), 4)
+                m["h"][a][-1] = m["v"][a]
+        cs_all = cstate_all()
+        for iso, d in eff.get("cstate", {}).items():
+            st = cstate(iso)
+            for k, v in d.items():
+                if k in CAPS:
+                    lo, hi = CAPS[k]
+                    st[k] = round(max(lo, min(hi, st[k] - v)), 2)
+            cs_all[iso] = st
+        await db.arun(_rollback_db, row, fact_tag, shorten(f"{head}. {body}", 600), t, m, cs_all)
+    extra = ("отменены напряжённость, биржа и защита" if eff else
+             "последствия не отменены — для старых новостей они не сохранялись")
+    return f"✅ Новость откачена: удалена из ленты и мировых фактов; {extra}."

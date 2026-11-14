@@ -306,3 +306,9 @@ async def addcountry_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     wb.register_country(name)
     await db.arun(db.set_setting, "custom_countries", json.dumps(wb.custom_countries()))
     await safe_reply(msg, f"✅ Страна <b>{esc(name)}</b> добавлена. Бот будет учитывать её везде.")
+
+
+@staff_only
+async def rollback_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text, markup = await ui.rollback_screen(0)
+    await safe_reply(update.effective_message, text, reply_markup=markup)

@@ -35,7 +35,18 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 # === ВЛАДЕЛЬЦЫ (полный доступ). Лучше задать через переменные окружения. ===
 ADMIN_ID = _int("ADMIN_ID", 8283458488)
 RP_OWNER_ID = _int("RP_OWNER_ID", 7598252516)
-OWNER_IDS = frozenset(i for i in (ADMIN_ID, RP_OWNER_ID) if i)
+def _ids(name: str) -> set:
+    out = set()
+    for x in (os.getenv(name) or "").replace(";", ",").split(","):
+        try:
+            out.add(int(x.strip()))
+        except ValueError:
+            pass
+    return out
+
+
+# EXTRA_OWNER_IDS — ещё владельцы через запятую (например, ваш ID), без замены ADMIN_ID/RP_OWNER_ID
+OWNER_IDS = frozenset({i for i in (ADMIN_ID, RP_OWNER_ID) if i} | _ids("EXTRA_OWNER_IDS"))
 RP_OWNER_USERNAME = os.getenv("RP_OWNER_USERNAME", "").lstrip("@")
 DEVELOPER_USERNAME = os.getenv("DEVELOPER_USERNAME", "cakemogus").lstrip("@")
 

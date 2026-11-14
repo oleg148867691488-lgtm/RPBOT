@@ -555,6 +555,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = msg.text or msg.caption          # новость с фото: текст лежит в подписи
 
+    if text.strip().lower() in ("откат", "/откат") and is_staff(msg.from_user.id):   # «откат» словом, без команды
+        from gamecmds import rollback_command
+        await rollback_command(update, context)
+        return
+
     if msg.chat.type == "private" and not text.startswith("#"):
         pend = context.user_data.get("pending_order")          # (режим, время, уже сказанное)
         if pend and time.time() - pend[1] < 600:
