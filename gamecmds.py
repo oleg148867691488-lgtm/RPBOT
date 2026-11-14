@@ -1,5 +1,6 @@
 """GAMECMDS.PY — команды «живого мира»: /op /news /market /tension /mycountry /security /event /ops."""
 
+import json
 import logging
 import re
 import time
@@ -288,3 +289,20 @@ async def wars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = ("⚔️ <b>ВОЙНЫ</b>\n\n" + "\n".join(f"• {esc(ISO_RU.get(a, a))} ↔ {esc(ISO_RU.get(b, b))}" for a, b in w)
             if w else "🕊 Сейчас никто ни с кем не воюет.")
     await safe_reply(update.effective_message, text)
+
+
+@staff_only
+async def addcountry_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    import worldbank as wb
+    msg = update.effective_message
+    name = " ".join(context.args or []).strip()
+    if len(name) < 3:
+        await safe_reply(msg, "Используй: <code>/addcountry Новороссия</code> — бот запомнит новую страну "
+                              "(для событий, операций, войн, сравнений).")
+        return
+    if find_countries(name):
+        await safe_reply(msg, "ℹ️ Такая страна уже есть в списке.")
+        return
+    wb.register_country(name)
+    await db.arun(db.set_setting, "custom_countries", json.dumps(wb.custom_countries()))
+    await safe_reply(msg, f"✅ Страна <b>{esc(name)}</b> добавлена. Бот будет учитывать её везде.")

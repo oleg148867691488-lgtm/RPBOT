@@ -28,6 +28,7 @@ import database as db
 import events
 import gamecmds as gc
 import ui
+import worldbank
 from handlers import handle_message, verdict_command
 from netclient import close_client, get_client
 
@@ -86,6 +87,7 @@ async def post_init(app: Application):
     if last_err:
         raise RuntimeError("База данных недоступна — запуск остановлен") from last_err
 
+    worldbank.load_custom(db.get_setting("custom_countries"))
     await app.bot.set_my_commands([
         BotCommand("menu", "Главное меню"),
         BotCommand("help", "Помощь"),
@@ -176,6 +178,7 @@ def main():
     app.add_handler(CommandHandler("war", gc.war_command))
     app.add_handler(CommandHandler("peace", gc.peace_command))
     app.add_handler(CommandHandler("wars", gc.wars_command))
+    app.add_handler(CommandHandler("addcountry", gc.addcountry_command))
     app.add_handler(CommandHandler("news", gc.news_command))
     app.add_handler(CommandHandler("market", gc.market_command))
     app.add_handler(CommandHandler("tension", gc.tension_command))
@@ -210,7 +213,7 @@ def main():
     app.add_handler(CommandHandler("deladmin", cmd.deladmin_command))
 
     # --- Обычные сообщения (вопросы + #теги) и кнопки меню ---
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler((filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(ui.ui_callback, pattern=r"^ui:"))
     app.add_handler(CallbackQueryHandler(cmd.menu_callback, pattern=r"^menu_"))
     app.add_error_handler(error_handler)

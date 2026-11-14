@@ -143,6 +143,7 @@ def text_help(bot_username: str = "") -> str:
         "/clear_history · /admins · /ops\n"
         "/event [тип] [страна] — событие вручную · /security страна 0-100 — защита страны\n"
         "/war Страна1 Страна2 · /peace Страна1 Страна2 — война усиливает терроризм и протесты\n"
+        "/addcountry Название — добавить новую страну РП\n"
         "🔹 <b>Для владельцев</b>\n"
         "/clear_facts · /deltag тег · /addadmin · /deladmin\n\n"
         "ℹ️ /myid — узнать свой ID и ID чата/темы."

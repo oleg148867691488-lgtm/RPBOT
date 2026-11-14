@@ -9,6 +9,7 @@ WORLDBANK.PY — данные Всемирного банка.
 - Добавлены показатели: военные расходы, госдолг.
 """
 
+import json
 import logging
 import re
 from datetime import datetime
@@ -264,3 +265,48 @@ async def fetch_value(iso3: str, code: str, year: int = None):
         if rec.get("value") is not None:
             return rec["value"], str(rec["date"])
     return None
+
+
+# ---------------------------------------------------------------------
+# Новые страны, появившиеся в РП (хранятся в БД, бот их запоминает)
+# ---------------------------------------------------------------------
+
+_custom = {}
+
+
+def custom_countries() -> dict:
+    return dict(_custom)
+
+
+def _rebuild():
+    global _COUNTRY_PATTERNS
+    merged = dict(COUNTRIES)
+    merged.update(_custom)
+    _COUNTRY_PATTERNS = _compile(merged)
+
+
+def _label(name: str) -> str:
+    name = name.strip()
+    return name[:1].upper() + name[1:]
+
+
+def register_country(name: str) -> str:
+    key = re.sub(r"\s+", " ", name.strip().lower())
+    code = _custom.get(key) or "X_" + re.sub(r"\W+", "_", key.upper()).strip("_")
+    _custom[key] = code
+    ISO_RU[code] = _label(name)
+    _rebuild()
+    return code
+
+
+def load_custom(raw):
+    if not raw:
+        return
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return
+    for key, code in data.items():
+        _custom[key] = code
+        ISO_RU[code] = _label(key)
+    _rebuild()

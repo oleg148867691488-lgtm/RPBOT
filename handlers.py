@@ -551,9 +551,9 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg or not msg.text or not msg.from_user or msg.from_user.is_bot:
+    if not msg or not (msg.text or msg.caption) or not msg.from_user or msg.from_user.is_bot:
         return
-    text = msg.text
+    text = msg.text or msg.caption          # новость с фото: текст лежит в подписи
 
     if msg.chat.type == "private" and not text.startswith("#"):
         pend = context.user_data.get("pending_order")          # (режим, время, уже сказанное)
