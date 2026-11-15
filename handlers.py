@@ -39,6 +39,7 @@ _summarizing: set = set()
 _bg_tasks: set = set()
 
 _SKIP_TAG_PREFIXES = ("world_", "игрок_")
+_SECRET_RE = re.compile(r"#(?:секрет|чертеж|чертёж)\d?(?![\w])", re.I)
 
 
 # =====================================================================
@@ -163,7 +164,7 @@ async def save_fact_from_message(update: Update, context: ContextTypes.DEFAULT_T
     is_world = (bool(world_chat) and chat_id == world_chat
                 and thread_id == world_thread and not is_facts)
 
-    if not (is_facts or is_world or is_staff(user.id)):
+    if not (is_facts or is_world or is_staff(user.id) or (msg.chat.type == "private" and _SECRET_RE.search(text))):
         return False
 
     parsed = parse_fact_line(text)
@@ -172,6 +173,10 @@ async def save_fact_from_message(update: Update, context: ContextTypes.DEFAULT_T
             await safe_reply(msg, "ℹ️ Формат: <code>#тег текст факта (год)</code>")
         return False
     tags, fact_text, year = parsed
+    marker = next((t for t in tags if re.fullmatch(r"(?:секрет|чертеж|чертёж)\d?", t)), None)
+    if marker:                                   # секретная новость / чертёж (для шпионажа): в обычные факты не попадает
+        from spy import save_secret
+        return await save_secret(context.bot, msg, tags, marker, fact_text, user, is_staff(user.id))
 
     added = await db.arun(_store_fact, tags, fact_text, user.id, user.username or "", year, is_world)
 
@@ -558,6 +563,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.strip().lower() in ("откат", "/откат") and is_staff(msg.from_user.id):   # «откат» словом, без команды
         from gamecmds import rollback_command
         await rollback_command(update, context)
+        return
+
+    pm = context.user_data.get("pending_move")                # (война, чат, время): следующее сообщение — ход в войне
+    if pm and pm[1] == msg.chat.id and time.time() - pm[2] < 600 and not text.startswith("#"):
+        context.user_data.pop("pending_move", None)
+        from wars import save_move
+        await save_move(update, context, pm[0], text)
         return
 
     if msg.chat.type == "private" and not text.startswith("#"):

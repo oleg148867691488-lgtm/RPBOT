@@ -224,6 +224,7 @@ def init_db():
     old_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(timespec="seconds")
     execute("DELETE FROM history WHERE is_archived = 1 AND created_at < ?", (old_ts,))
 
+    _create_extra_tables()
     try:                                      # старые базы: добавляем колонку эффектов (нужна для отката)
         execute("ALTER TABLE world_events ADD COLUMN effects TEXT")
     except Exception:
@@ -717,3 +718,115 @@ def delete_world_event(event_id: int):
 def delete_fact_by_text(tag: str, text: str):
     execute("DELETE FROM facts WHERE tag = ? AND text = ?", (tag.lower().strip(), text))
     _invalidate_tags()
+
+
+# =====================================================================
+# СЕКРЕТЫ (шпионаж) И ВОЙНЫ
+# =====================================================================
+
+def _create_extra_tables():
+    execute("""CREATE TABLE IF NOT EXISTS secrets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, country TEXT NOT NULL, kind TEXT NOT NULL, level INTEGER NOT NULL,
+        title TEXT, text TEXT NOT NULL, author_id INTEGER, created_at TEXT NOT NULL)""")
+    execute("""CREATE TABLE IF NOT EXISTS loot (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, secret_id INTEGER, country TEXT, kind TEXT,
+        title TEXT, text TEXT, ts TEXT NOT NULL)""")
+    execute("""CREATE TABLE IF NOT EXISTS war_state (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, a TEXT NOT NULL, b TEXT NOT NULL, front TEXT DEFAULT '',
+        forces TEXT DEFAULT '', summary TEXT DEFAULT '', turn INTEGER DEFAULT 0, last_verdict REAL DEFAULT 0)""")
+    execute("""CREATE TABLE IF NOT EXISTS war_moves (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, war_id INTEGER NOT NULL, user_id INTEGER, user_name TEXT, country TEXT,
+        text TEXT NOT NULL, ts TEXT NOT NULL, processed INTEGER DEFAULT 0)""")
+    execute("CREATE INDEX IF NOT EXISTS idx_war_moves ON war_moves(war_id, processed)")
+
+
+def add_secret(country, kind, level, title, text, author_id) -> int:
+    with _lock:
+        execute("INSERT INTO secrets (country, kind, level, title, text, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (country, kind, level, title, text, author_id, _now()))
+        rows = execute("SELECT last_insert_rowid() AS id")
+    return rows[0]["id"] if rows else 0
+
+
+def list_secrets(country: str = None, limit: int = 30) -> list:
+    if country:
+        return execute("SELECT id, country, kind, level, title FROM secrets WHERE country = ? ORDER BY id DESC LIMIT ?", (country, limit))
+    return execute("SELECT id, country, kind, level, title FROM secrets ORDER BY id DESC LIMIT ?", (limit,))
+
+
+def find_secrets(country: str, kind: str = None, keyword: str = "") -> list:
+    """Секреты страны; поиск по ключевым словам без учёта регистра (в SQLite LIKE не работает с кириллицей)."""
+    q, params = "SELECT * FROM secrets WHERE country = ?", [country]
+    if kind:
+        q += " AND kind = ?"
+        params.append(kind)
+    rows = execute(q + " ORDER BY level ASC, id DESC LIMIT 300", tuple(params))
+    words = [w[:5] for w in keyword.lower().replace("ё", "е").split() if len(w) >= 3]
+    if words:
+        rows = [r for r in rows if any(w in ((r["title"] or "") + " " + r["text"]).lower().replace("ё", "е") for w in words)]
+    return rows[:5]
+
+
+def delete_secret(secret_id: int) -> bool:
+    rows = execute("SELECT id FROM secrets WHERE id = ?", (secret_id,))
+    if rows:
+        execute("DELETE FROM secrets WHERE id = ?", (secret_id,))
+    return bool(rows)
+
+
+def add_loot(user_id, secret_id, country, kind, title, text):
+    execute("INSERT INTO loot (user_id, secret_id, country, kind, title, text, ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, secret_id, country, kind, title, text, _now()))
+
+
+def get_loot(user_id: int, limit: int = 8) -> list:
+    return execute("SELECT * FROM loot WHERE user_id = ? ORDER BY id DESC LIMIT ?", (user_id, limit))
+
+
+def war_get_or_create(a: str, b: str) -> int:
+    with _lock:
+        rows = execute("SELECT id FROM war_state WHERE (a = ? AND b = ?) OR (a = ? AND b = ?)", (a, b, b, a))
+        if rows:
+            return rows[0]["id"]
+        execute("INSERT INTO war_state (a, b) VALUES (?, ?)", (a, b))
+        return execute("SELECT last_insert_rowid() AS id")[0]["id"]
+
+
+def war_get(war_id: int):
+    rows = execute("SELECT * FROM war_state WHERE id = ?", (war_id,))
+    return rows[0] if rows else None
+
+
+def war_add_move(war_id, user_id, user_name, country, text) -> int:
+    with _lock:
+        execute("INSERT INTO war_moves (war_id, user_id, user_name, country, text, ts) VALUES (?, ?, ?, ?, ?, ?)",
+                (war_id, user_id, user_name, country, text, _now()))
+        return war_pending_count(war_id)
+
+
+def war_pending(war_id: int, limit: int = 40) -> list:
+    return execute("SELECT * FROM war_moves WHERE war_id = ? AND processed = 0 ORDER BY id ASC LIMIT ?", (war_id, limit))
+
+
+def war_pending_count(war_id: int) -> int:
+    rows = execute("SELECT COUNT(*) AS c FROM war_moves WHERE war_id = ? AND processed = 0", (war_id,))
+    return rows[0]["c"] if rows else 0
+
+
+def war_user_pending(war_id: int, user_id: int) -> int:
+    rows = execute("SELECT COUNT(*) AS c FROM war_moves WHERE war_id = ? AND processed = 0 AND user_id = ?", (war_id, user_id))
+    return rows[0]["c"] if rows else 0
+
+
+def war_mark_processed(ids: list):
+    if ids:
+        execute(f"UPDATE war_moves SET processed = 1 WHERE id IN ({','.join('?' * len(ids))})", tuple(ids))
+
+
+def war_update(war_id, front, forces, summary, turn, ts):
+    execute("UPDATE war_state SET front = ?, forces = ?, summary = ?, turn = ?, last_verdict = ? WHERE id = ?",
+            (front, forces, summary, turn, ts, war_id))
+
+
+def war_front_for(iso: str) -> list:
+    return execute("SELECT a, b, front FROM war_state WHERE (a = ? OR b = ?) AND front != '' ORDER BY id DESC LIMIT 2", (iso, iso))

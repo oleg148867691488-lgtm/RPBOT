@@ -28,6 +28,7 @@ import database as db
 import events
 import gamecmds as gc
 import ui
+import wars
 import worldbank
 from handlers import handle_message, verdict_command
 from netclient import close_client, get_client
@@ -98,6 +99,9 @@ async def post_init(app: Application):
         BotCommand("news", "Мировые новости"),
         BotCommand("market", "Биржа"),
         BotCommand("op", "Тайная операция"),
+        BotCommand("spy", "Шпионаж: кража секретов"),
+        BotCommand("war", "Войны: ходы и меню"),
+        BotCommand("war_verdict", "Вердикт по войне"),
         BotCommand("action", "Решение своей страны"),
         BotCommand("timeline", "Хроника страны/темы"),
         BotCommand("year", "Дата в РП"),
@@ -175,7 +179,12 @@ def main():
     app.add_handler(CommandHandler("op", gc.op_command))
     app.add_handler(CommandHandler(["action", "do"], gc.action_command))
     app.add_handler(CommandHandler("terror", gc.terror_command))
-    app.add_handler(CommandHandler("war", gc.war_command))
+    app.add_handler(CommandHandler("war", wars.war_command))
+    app.add_handler(CommandHandler("war_verdict", wars.verdict_command))
+    app.add_handler(CommandHandler("spy", gc.spy_command))
+    app.add_handler(CommandHandler("loot", gc.loot_command))
+    app.add_handler(CommandHandler("secrets", gc.secrets_command))
+    app.add_handler(CommandHandler("delsecret", gc.delsecret_command))
     app.add_handler(CommandHandler("peace", gc.peace_command))
     app.add_handler(CommandHandler("wars", gc.wars_command))
     app.add_handler(CommandHandler("addcountry", gc.addcountry_command))
@@ -216,6 +225,7 @@ def main():
     # --- Обычные сообщения (вопросы + #теги) и кнопки меню ---
     app.add_handler(MessageHandler((filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(ui.ui_callback, pattern=r"^ui:"))
+    app.add_handler(CallbackQueryHandler(wars.war_callback, pattern=r"^war:"))
     app.add_handler(CallbackQueryHandler(cmd.menu_callback, pattern=r"^menu_"))
     app.add_error_handler(error_handler)
 

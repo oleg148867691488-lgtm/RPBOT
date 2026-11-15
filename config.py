@@ -119,3 +119,12 @@ TERROR_COOLDOWN_PLAYER = _float("TERROR_COOLDOWN_PLAYER", 1800.0)
 TERROR_COOLDOWN_STAFF = _float("TERROR_COOLDOWN_STAFF", 60.0)
 TERROR_LIMIT_PLAYER = _int("TERROR_LIMIT_PLAYER", 1)     # заказов в сутки
 TERROR_LIMIT_STAFF = _int("TERROR_LIMIT_STAFF", 10)
+
+# === ШПИОНАЖ (/spy, только в личке) ===
+SPY_COOLDOWN_PLAYER = _float("SPY_COOLDOWN_PLAYER", 900.0)
+SPY_COOLDOWN_STAFF = _float("SPY_COOLDOWN_STAFF", 30.0)
+SPY_LIMIT_PLAYER = _int("SPY_LIMIT_PLAYER", 2)           # попыток в сутки
+SPY_LIMIT_STAFF = _int("SPY_LIMIT_STAFF", 20)
+
+# === ВОЙНЫ (/war, /war_verdict) ===
+WAR_VERDICT_COOLDOWN = _float("WAR_VERDICT_COOLDOWN", 600.0)   # пауза между вердиктами по одной войне

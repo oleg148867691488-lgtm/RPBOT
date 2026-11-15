@@ -14,6 +14,7 @@ import database as db
 import actions
 import opsai
 import ops
+import spy
 import ui
 import world
 from auth import is_staff
@@ -162,7 +163,7 @@ ORDER_PROMPT = {
 async def _start_order(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str):
     """Команда /terror или /op: с текстом — сразу в работу, без текста — ждём описание следующим сообщением."""
     msg = update.effective_message
-    if mode == "terror" and msg.chat.type != "private":
+    if mode in ("terror", "spy") and msg.chat.type != "private":
         await safe_reply(msg, "🔒 Такие заказы принимаются только в <b>личке</b> с ботом — напиши мне туда.")
         return
     text = " ".join(context.args or []).strip()
@@ -179,6 +180,9 @@ async def _start_order(update: Update, context: ContextTypes.DEFAULT_TYPE, mode:
 async def order_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str, text: str):
     """Описание операции получено (аргументом команды или следующим сообщением)."""
     msg, user = update.effective_message, update.effective_user
+    if mode == "spy":
+        await _spy_from_text(update, context, text)
+        return
     terror = mode == "terror"
     if terror and not world_target()[0]:
         await safe_reply(msg, "❌ Тема мировых новостей не задана (админ: <code>/saveworld</code> в нужной теме).")
@@ -312,3 +316,97 @@ async def addcountry_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def rollback_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, markup = await ui.rollback_screen(0)
     await safe_reply(update.effective_message, text, reply_markup=markup)
+
+
+ORDER_PROMPT["spy"] = ("🕶 <b>Шпионаж</b>\n\nОпиши операцию <b>своими словами</b>, одним сообщением: у какой страны и что крадём "
+                       "(чертежи или секретные новости, можно название/тему), от лица какой страны, чем располагаете. Формат не важен.\n"
+                       "ИИ-ГМ оценит план (🟢 хороший · 🟡 средний · 🔴 слабый). Чем сильнее зашифрован секрет и крепче "
+                       "контрразведка цели, тем сложнее.\n<i>Жду твоё сообщение (10 минут).</i>")
+
+
+async def spy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    if msg.chat.type != "private":
+        await safe_reply(msg, "🔒 Шпионские операции — только в <b>личке</b> с ботом.")
+        return
+    text = " ".join(context.args or []).strip()
+    if text:
+        await _spy_from_text(update, context, text)
+    else:
+        context.user_data["pending_order"] = ("spy", time.time(), "")
+        await safe_reply(msg, ORDER_PROMPT["spy"])
+
+
+async def _spy_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    msg, user = update.effective_message, update.effective_user
+    staff = is_staff(user.id)
+    wait = _op_cd.hit((user.id, "spy"), C.SPY_COOLDOWN_STAFF if staff else C.SPY_COOLDOWN_PLAYER)
+    if wait:
+        await safe_reply(msg, f"⏳ Агенты ещё не вернулись. Подожди {int(wait) // 60 + 1} мин.")
+        return
+    limit = C.SPY_LIMIT_STAFF if staff else C.SPY_LIMIT_PLAYER
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if await db.arun(db.get_usage, user.id, today, "spy") >= limit:
+        _op_cd.reset((user.id, "spy"))
+        await safe_reply(msg, f"⏳ Лимит шпионских операций на сегодня исчерпан ({limit}/{limit}).")
+        return
+    status = await safe_reply(msg, "🕶 <i>ГМ изучает план…</i>")
+    try:
+        spec, err = await spy.parse_spy(text[:1800], world.mycountry(user.id))
+        if err:
+            _op_cd.reset((user.id, "spy"))
+            context.user_data["pending_order"] = ("spy", time.time(), text[:1800])
+            await safe_reply(msg, f"❓ {esc(err)}.\nДопиши недостающее одним сообщением — я учту всё сказанное.")
+            return
+        report = await spy.execute_spy(context.bot, user, spec)
+    except Exception:
+        _op_cd.reset((user.id, "spy"))
+        raise
+    finally:
+        try:
+            await status.delete()
+        except Exception:
+            pass
+    await db.arun(db.inc_usage, user.id, today, "spy")
+    await safe_reply(msg, report)
+
+
+async def loot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg, user = update.effective_message, update.effective_user
+    if msg.chat.type != "private":
+        await safe_reply(msg, "🔒 Добыча показывается только в личке с ботом.")
+        return
+    rows = await db.arun(db.get_loot, user.id, 6)
+    if not rows:
+        await safe_reply(msg, "📦 У тебя пока нет добычи. Шпионаж: <code>/spy</code>")
+        return
+    parts = ["📦 <b>ТВОЯ ДОБЫЧА</b>"]
+    for r in rows:
+        parts.append(f"\n🏴 <b>{esc(ISO_RU.get(r['country'], r['country']))}</b> · {spy.KIND_RU.get(r['kind'], '')} · "
+                     f"«{esc(r['title'])}»\n<blockquote>{esc(shorten(r['text'], 700))}</blockquote>")
+    await safe_reply(msg, "\n".join(parts))
+
+
+@staff_only
+async def secrets_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    isos = find_countries(" ".join(context.args or []))
+    rows = await db.arun(db.list_secrets, isos[0] if isos else None, 30)
+    if not rows:
+        await safe_reply(msg, "🔒 Секретов нет. Создать: <code>#франция #секрет3 текст</code> или <code>#франция #чертёж4 название: описание</code>")
+        return
+    lines = ["🔒 <b>СЕКРЕТЫ</b> (степень шифрования 1–5)\n"]
+    lines += [f"<code>{r['id']}</code> · {esc(ISO_RU.get(r['country'], r['country']))} · {spy.KIND_RU.get(r['kind'], '')} · "
+              f"ур. {r['level']} · {esc(r['title'] or '')}" for r in rows]
+    lines.append("\nУдалить: <code>/delsecret id</code>")
+    await safe_reply(msg, "\n".join(lines))
+
+
+@staff_only
+async def delsecret_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg, args = update.effective_message, context.args or []
+    if not args or not args[0].isdigit():
+        await safe_reply(msg, "Используй: <code>/delsecret id</code> (id — в /secrets)")
+        return
+    ok = await db.arun(db.delete_secret, int(args[0]))
+    await safe_reply(msg, "🗑 Секрет удалён." if ok else "❌ Секрет с таким id не найден.")

@@ -627,7 +627,7 @@ async def vs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 KIND_GROUPS = {
     "a": None,
-    "t": ["terror", "incident", "shock", "attack", "military"],
+    "t": ["terror", "incident", "shock", "attack", "military", "war", "spy"],
     "e": ["market", "cyber", "strike"],
     "s": ["protest", "propaganda", "death", "decree"],
 }
@@ -739,7 +739,7 @@ async def ops_log_screen():
     lines = ["📜 <b>ЖУРНАЛ ГМ · операции</b>", ""]
     if not rows:
         lines.append("Пока пусто.")
-    icons = {"killed": "✅", "wounded": "🩹", "failed": "❌", "major": "💥", "partial": "🔸", "foiled": "❌"}
+    icons = {"killed": "✅", "wounded": "🩹", "failed": "❌", "major": "💥", "partial": "🔸", "foiled": "❌", "success": "✅", "fail": "❌"}
     for r in rows:
         lines.append(f"{icons.get(r['outcome'], '•')} <code>#{r['id']}</code> {esc(ISO_RU.get(r['actor'], r['actor']))} → "
                      f"{esc(ISO_RU.get(r['target'], r['target']))} · {esc(r['role'])} · ${r['budget']:,}\n"
