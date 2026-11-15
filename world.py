@@ -190,8 +190,21 @@ def wars() -> list:
     return [tuple(p) for p in _load("wars", []) if len(p) == 2]
 
 
+def war_allies() -> dict:
+    """{'A|B': {'a': [союзники стороны A], 'b': [союзники стороны B]}}"""
+    return _load("war_allies", {})
+
+
 def at_war(iso: str) -> bool:
-    return any(iso in p for p in wars())
+    if any(iso in p for p in wars()):
+        return True
+    return any(iso in v.get("a", []) + v.get("b", []) for v in war_allies().values())
+
+
+def set_allies(a: str, b: str, al_a: list, al_b: list):
+    d = war_allies()
+    d[f"{a}|{b}"] = {"a": list(al_a), "b": list(al_b)}
+    db.set_setting("war_allies", json.dumps(d))
 
 
 def add_war(a: str, b: str) -> bool:
@@ -209,6 +222,9 @@ def end_war(a: str, b: str) -> bool:
     if len(new) == len(w):
         return False
     db.set_setting("wars", json.dumps(new))
+    d = war_allies()
+    if d.pop(f"{a}|{b}", None) is not None or d.pop(f"{b}|{a}", None) is not None:
+        db.set_setting("war_allies", json.dumps(d))
     return True
 
 

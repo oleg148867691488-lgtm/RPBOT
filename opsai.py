@@ -107,13 +107,15 @@ async def _canon_context(text: str) -> str:
     return "\n".join(lines[:8]) or "нет"
 
 
-async def _auto_country(name: str):
+async def _auto_country(name: str, text: str = ""):
     """Страна, которой нет в списке, но по ней есть теги в базе РП, — запоминается автоматически."""
     import worldbank as wb
     from handlers import normal_tag_names
     low = (name or "").strip().lower()
-    if len(low) < 3 or low not in normal_tag_names(await db.arun(db.get_all_tags)):
+    if len(low) < 3:
         return None
+    if low not in normal_tag_names(await db.arun(db.get_all_tags)) and not (text and low[:5] in text.lower()):
+        return None                                  # запоминаем, если есть теги ИЛИ страна названа в тексте игрока
     code = wb.register_country(name)
     await db.arun(db.set_setting, "custom_countries", json.dumps(wb.custom_countries()))
     return code
@@ -143,11 +145,11 @@ async def parse_order(mode: str, text: str, default_actor: str = None):
         return None, str(data.get("reason") or "не удалось понять цель, уточни страну и место/должность")
     target = next(iter(find_countries(str(data.get("country", "")))), None) or next(iter(find_countries(text)), None)
     if not target:
-        target = await _auto_country(str(data.get("country", "")))
+        target = await _auto_country(str(data.get("country", "")), text)
     if not target:
         return None, "не вижу страну цели (если это новая страна — админ может добавить: /addcountry Название)"
     actor = (next(iter(find_countries(str(data.get("actor", "")))), None)
-             or await _auto_country(str(data.get("actor", ""))) or default_actor)
+             or await _auto_country(str(data.get("actor", "")), text) or default_actor)
     if not actor:
         return None, "не понял, от лица какой страны ты действуешь"
     if actor == target:

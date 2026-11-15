@@ -1,12 +1,15 @@
 """
-RPTIME.PY — время внутри РП.
-24 реальных часа = 365 дней РП (2 часа ≈ 1 месяц). Отсчёт идёт от момента /year.
-Исправлено: 29 февраля / 31-е число больше не роняют расчёт (дата корректно подгоняется).
+RPTIME.PY — время внутри РП (по московскому времени, привязано к настоящим часам).
+
+• Каждые реальные сутки по МСК = 1 год РП: в 00:00 МСК наступает Новый год (год +1).
+• Год делится на 12 равных месяцев по 2 часа: 00–02 — январь, 02–04 — февраль, …, 10–12 — июнь, 12–14 — июль, …
+• Внутри месяца идут дни и часы РП пропорционально прошедшему времени.
+Команда /year ГОД задаёт, какой год РП идёт СЕЙЧАС (в этот реальный день).
 """
 
+import calendar
 import logging
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time as dtime, timedelta, timezone
 
 import config as C
 import database as db
@@ -27,50 +30,49 @@ def now_msk() -> datetime:
         return datetime.now(timezone(timedelta(hours=3)))
 
 
-def _safe_date(year: int, month: int, day: int) -> datetime:
-    while day > 0:
-        try:
-            return datetime(year, month, day)
-        except ValueError:
-            day -= 1
-    return datetime(year, 1, 1)
-
-
 def set_rp_year(year: int):
-    """Запускает отсчёт РП с указанного года (синхронная, выполнять через db.arun)."""
+    """Сейчас идёт указанный год РП. Синхронная — выполнять через db.arun."""
     n = now_msk()
     db.set_setting("rp_year", str(year))
-    db.set_setting("rp_start_time", str(time.time()))
-    db.set_setting("rp_start_month", str(n.month))
-    db.set_setting("rp_start_day", str(n.day))
+    db.set_setting("rp_anchor_date", n.date().isoformat())
     return n
+
+
+def _anchor(now: datetime) -> date:
+    raw = db.get_setting("rp_anchor_date")
+    if raw:
+        return date.fromisoformat(raw)
+    st = db.get_setting("rp_start_time")           # базы старой версии
+    return datetime.fromtimestamp(float(st), tz=now.tzinfo).date() if st else now.date()
 
 
 def get_rp_datetime() -> dict:
     saved_year = db.get_setting("rp_year")
-    saved_start = db.get_setting("rp_start_time")
-    if not saved_year or not saved_start:
+    if not saved_year:
         return dict(_EMPTY)
     try:
-        base_year = int(saved_year)
-        start_ts = float(saved_start)
-        base_month = int(db.get_setting("rp_start_month", "1"))
-        base_day = int(db.get_setting("rp_start_day", "1"))
+        base = int(saved_year)
         now = now_msk()
-        elapsed_h = max(0.0, (now.timestamp() - start_ts) / 3600)
-        rp_days = elapsed_h * C.RP_DAYS_PER_REAL_HOUR
-        rp_date = _safe_date(base_year, base_month, base_day) + timedelta(days=rp_days)
-        next_year = datetime(rp_date.year + 1, 1, 1)
+        anchor = _anchor(now)
+        year = base + (now.date() - anchor).days
+        f = (now.hour * 3600 + now.minute * 60 + now.second) / 86400        # доля реальных суток = доля года
+        m = min(11, int(f * 12))                                              # месяц меняется каждые 2 часа
+        g = f * 12 - m
+        dim = calendar.monthrange(year, m + 1)[1]
+        dayf = g * dim
+        day = min(dim, 1 + int(dayf))
+        rest = (dayf % 1) * 24
+        hour, minute = int(rest), int((rest % 1) * 60)
+        dt = datetime(year, m + 1, day, hour, minute)
+        total = 366 if calendar.isleap(year) else 365
+        doy = sum(calendar.monthrange(year, i)[1] for i in range(1, m + 1)) + dayf
+        elapsed = (now - datetime.combine(anchor, dtime(0, 0), tzinfo=now.tzinfo)).total_seconds() / 3600
         return {
-            "year": rp_date.year,
-            "month": rp_date.month,
-            "day": rp_date.day,
-            "hour": rp_date.hour,
-            "full": rp_date.strftime("%d.%m.%Y %H:%M"),
-            "elapsed_hours": elapsed_h,
-            "rp_days": rp_days,
+            "year": year, "month": m + 1, "day": day, "hour": hour,
+            "full": dt.strftime("%d.%m.%Y %H:%M"),
+            "elapsed_hours": max(0.0, elapsed), "rp_days": max(0.0, elapsed) * C.RP_DAYS_PER_REAL_HOUR,
             "real_msk": now.strftime("%d.%m.%Y %H:%M:%S"),
-            "days_to_new_year": (next_year - rp_date).days,
+            "days_to_new_year": max(0, int(total - doy)),
         }
     except (ValueError, TypeError, OverflowError) as e:
         log.warning("Не удалось посчитать время РП: %s", e)

@@ -410,3 +410,18 @@ async def delsecret_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     ok = await db.arun(db.delete_secret, int(args[0]))
     await safe_reply(msg, "🗑 Секрет удалён." if ok else "❌ Секрет с таким id не найден.")
+
+
+async def agents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg, user = update.effective_message, update.effective_user
+    if msg.chat.type != "private":
+        await safe_reply(msg, "🔒 Список агентов — только в личке с ботом.")
+        return
+    rows = await db.arun(db.list_agents, user.id)
+    if not rows:
+        await safe_reply(msg, "🕴 У тебя нет агентов. Внедрить: <code>/spy</code> и опиши, что внедряешь агента в правительство страны.")
+        return
+    lines = ["🕴 <b>ТВОИ АГЕНТЫ</b>\n"]
+    lines += [f"{'✅' if a['active'] else '☠️'} {esc(ISO_RU.get(a['target'], a['target']))} · {spy.RANK_RU.get(a['rank'], '')} "
+              f"(уровень {a['rank']}/3){'' if a['active'] else ' — раскрыт'}" for a in rows]
+    await safe_reply(msg, "\n".join(lines))

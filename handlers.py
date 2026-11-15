@@ -560,6 +560,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = msg.text or msg.caption          # новость с фото: текст лежит в подписи
 
+    low_cmd = text.strip().lower()
+    for word, mod_fn in (("/вар", "war_command"), ("/война", "war_command"), ("/мир", "peace_command")):
+        if low_cmd == word or low_cmd.startswith(word + " "):     # кириллица — Telegram не считает это командой
+            context.args = text.strip().split()[1:]
+            if mod_fn == "war_command":
+                from wars import war_command as fn
+            else:
+                from gamecmds import peace_command as fn
+            await fn(update, context)
+            return
+
     if text.strip().lower() in ("откат", "/откат") and is_staff(msg.from_user.id):   # «откат» словом, без команды
         from gamecmds import rollback_command
         await rollback_command(update, context)

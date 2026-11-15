@@ -183,6 +183,7 @@ def main():
     app.add_handler(CommandHandler("war_verdict", wars.verdict_command))
     app.add_handler(CommandHandler("spy", gc.spy_command))
     app.add_handler(CommandHandler("loot", gc.loot_command))
+    app.add_handler(CommandHandler("agents", gc.agents_command))
     app.add_handler(CommandHandler("secrets", gc.secrets_command))
     app.add_handler(CommandHandler("delsecret", gc.delsecret_command))
     app.add_handler(CommandHandler("peace", gc.peace_command))

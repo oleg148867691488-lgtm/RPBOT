@@ -418,6 +418,11 @@ async def tick(bot):
     for item in [x for x in _queue if x[0] <= now]:
         _queue.remove(item)
         await create_event(bot, item[1], item[2])
+    try:
+        from spy import agents_tick
+        await agents_tick(bot)
+    except Exception:
+        log.exception("Ошибка тика агентов")
 
 
 async def scheduler(bot):
