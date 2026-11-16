@@ -546,13 +546,29 @@ async def execute_attack(bot, user, spec: dict, chat_id: int = None, thread_id: 
     luck = random.randint(1, 100)
     judged = await ai_judge(spec, sec, pq, luck, war, await build_context(target))   # исход решает ИИ-ГМ, а не кубик
     scenario = reason = ""
+    dice_key = {"killed": "major", "wounded": "partial", "failed": "foiled"}.get(res["outcome"], res["outcome"])
     if judged:
         fkey = judged["outcome"]
+        rank = {"foiled": 0, "partial": 1, "major": 2}
+        if rank[dice_key] > rank[fkey] and random.random() < 0.7:     # нейросеть склонна «спасать» — формула получает право голоса
+            fkey = dice_key
         outcome = fkey if terror else {"major": "killed", "partial": "wounded", "foiled": "failed"}[fkey]
         res["outcome"] = outcome
-        fate = (judged["att_killed"], judged["att_arrested"], judged["att_escaped"])
-        cas = {"killed": judged["killed"], "wounded": judged["wounded"], "security_killed": judged["security_killed"]}
-        scenario, reason = judged["scenario"], judged["reason"]
+        base_cas = terror_casualties(spec, outcome, sec, pq) if terror else casualties(mode, outcome, 3, spec["category"], pq)
+        if fkey == judged["outcome"]:
+            fate = (judged["att_killed"], judged["att_arrested"], judged["att_escaped"])
+            # потери считает код; нейросеть может их только УВЕЛИЧИТЬ, но не занизить
+            cas = {"killed": max(base_cas["killed"], judged["killed"]), "wounded": max(base_cas["wounded"], judged["wounded"]),
+                   "security_killed": judged["security_killed"]}
+            scenario, reason = judged["scenario"], judged["reason"]
+        else:
+            fate = perp_fate(n, fkey, style)
+            cas = dict(base_cas, security_killed=0)
+            reason = "по расчёту вероятностей план мог сработать полнее, чем решила нейросеть"
+        cap = max(1, int(crowd * 0.9))
+        if cas["killed"] + cas["wounded"] > cap:
+            f = cap / (cas["killed"] + cas["wounded"])
+            cas["killed"], cas["wounded"] = int(cas["killed"] * f), int(cas["wounded"] * f)
         if fate[1] == 0:
             res["revealed"] = "none"                 # допрашивать некого
     if strike and outcome == "foiled":

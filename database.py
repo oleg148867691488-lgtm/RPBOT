@@ -727,13 +727,13 @@ def delete_fact_by_text(tag: str, text: str):
 def _create_extra_tables():
     execute("""CREATE TABLE IF NOT EXISTS secrets (
         id INTEGER PRIMARY KEY AUTOINCREMENT, country TEXT NOT NULL, kind TEXT NOT NULL, level INTEGER NOT NULL,
-        title TEXT, text TEXT NOT NULL, author_id INTEGER, created_at TEXT NOT NULL)""")
+        title TEXT, text TEXT NOT NULL, author_id INTEGER, created_at TEXT NOT NULL, source TEXT DEFAULT 'rp')""")
     execute("""CREATE TABLE IF NOT EXISTS loot (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, secret_id INTEGER, country TEXT, kind TEXT,
         title TEXT, text TEXT, ts TEXT NOT NULL)""")
     execute("""CREATE TABLE IF NOT EXISTS war_state (
         id INTEGER PRIMARY KEY AUTOINCREMENT, a TEXT NOT NULL, b TEXT NOT NULL, front TEXT DEFAULT '',
-        forces TEXT DEFAULT '', summary TEXT DEFAULT '', turn INTEGER DEFAULT 0, last_verdict REAL DEFAULT 0, control TEXT DEFAULT '')""")
+        forces TEXT DEFAULT '', summary TEXT DEFAULT '', turn INTEGER DEFAULT 0, last_verdict REAL DEFAULT 0, control TEXT DEFAULT '', fnum TEXT DEFAULT '')""")
     execute("""CREATE TABLE IF NOT EXISTS war_moves (
         id INTEGER PRIMARY KEY AUTOINCREMENT, war_id INTEGER NOT NULL, user_id INTEGER, user_name TEXT, country TEXT,
         text TEXT NOT NULL, ts TEXT NOT NULL, processed INTEGER DEFAULT 0)""")
@@ -741,16 +741,18 @@ def _create_extra_tables():
     execute("""CREATE TABLE IF NOT EXISTS agents (
         id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER NOT NULL, actor TEXT, target TEXT NOT NULL,
         rank INTEGER NOT NULL, planted TEXT NOT NULL, active INTEGER DEFAULT 1)""")
-    try:
-        execute("ALTER TABLE war_state ADD COLUMN control TEXT DEFAULT ''")
-    except Exception:
-        pass
+    for stmt in ("ALTER TABLE war_state ADD COLUMN control TEXT DEFAULT ''", "ALTER TABLE war_state ADD COLUMN fnum TEXT DEFAULT ''",
+                 "ALTER TABLE secrets ADD COLUMN source TEXT DEFAULT 'rp'"):
+        try:
+            execute(stmt)
+        except Exception:
+            pass
 
 
-def add_secret(country, kind, level, title, text, author_id) -> int:
+def add_secret(country, kind, level, title, text, author_id, source="rp") -> int:
     with _lock:
-        execute("INSERT INTO secrets (country, kind, level, title, text, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (country, kind, level, title, text, author_id, _now()))
+        execute("INSERT INTO secrets (country, kind, level, title, text, author_id, created_at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (country, kind, level, title, text, author_id, _now(), source))
         rows = execute("SELECT last_insert_rowid() AS id")
     return rows[0]["id"] if rows else 0
 
@@ -865,3 +867,12 @@ def agent_rank_sum(owner_id: int, target: str) -> int:
 
 def loot_secret_ids(user_id: int) -> set:
     return {r["secret_id"] for r in execute("SELECT secret_id FROM loot WHERE user_id = ?", (user_id,))}
+
+
+def get_secret(secret_id: int):
+    rows = execute("SELECT * FROM secrets WHERE id = ?", (secret_id,))
+    return rows[0] if rows else None
+
+
+def war_set_fnum(war_id: int, fnum_json: str):
+    execute("UPDATE war_state SET fnum = ? WHERE id = ?", (fnum_json, war_id))

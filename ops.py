@@ -256,7 +256,7 @@ def terror_category(low: str) -> str:
 
 def resolve_terror(budget: int, security: float, intel: float = 0.0, pq: float = 50.0, war: bool = False, rng=random) -> dict:
     bf = min(1.0, math.log10(budget / 5e3 + 1) / 2.2)
-    p_major = min(0.7, max(0.02, 0.04 + 0.5 * bf * (1 - security / 110) + intel * 0.003 + (pq - 50) * 0.003))
+    p_major = min(0.75, max(0.03, 0.08 + 0.5 * bf * (1 - security / 140) + intel * 0.003 + (pq - 50) * 0.003))
     if war:
         p_major = min(0.75, p_major * 1.2)
     p_partial = min(0.3, p_major * 1.2)
