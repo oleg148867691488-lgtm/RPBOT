@@ -9,6 +9,7 @@ import json
 import math
 import random
 
+import config as C
 import database as db
 from textutils import shorten
 
@@ -118,7 +119,7 @@ def save_tension(t: dict):
 # ---------------- защита и «моя страна» ----------------
 
 def security(iso: str) -> int:
-    return int(_load("security", {}).get(iso, 50))
+    return int(_load("security", {}).get(iso, C.DEFAULT_SECURITY))
 
 
 def set_security(iso: str, value: int):

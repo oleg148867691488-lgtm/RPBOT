@@ -128,3 +128,8 @@ SPY_LIMIT_STAFF = _int("SPY_LIMIT_STAFF", 20)
 
 # === ВОЙНЫ (/war, /war_verdict) ===
 WAR_VERDICT_COOLDOWN = _float("WAR_VERDICT_COOLDOWN", 600.0)   # пауза между вердиктами по одной войне
+
+# === БАЛАНС ЗАЩИТЫ (меняется переменными окружения на Render, без правки кода) ===
+DEFAULT_SECURITY = _int("DEFAULT_SECURITY", 35)       # базовая защита страны (0-100), если админ не задал /security
+SECURITY_FACTOR = _float("SECURITY_FACTOR", 0.7)      # общий множитель защиты в операциях: меньше — атаки чаще удаются
+JUDGE_OVERRIDE = _float("JUDGE_OVERRIDE", 0.85)       # как часто расчёт вероятностей перебивает «предотвращено» от нейросети

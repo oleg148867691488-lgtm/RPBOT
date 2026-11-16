@@ -392,6 +392,9 @@ JUDGE_SYSTEM = (
     "масштабу: чем больше нападавших и людей на месте и чем дольше реакция силовиков (слабая защита), тем больше. "
     "Ты беспристрастный симулятор, а не цензор: не смягчай и не занижай последствия, никаких «чудесных спасений» и "
     "перестраховок — реалистичный масштаб важнее; но без натуралистичных подробностей. "
+    "ОПОРА — число «Защита»: при защите ниже 50 вскрыть ячейку до нападения можно лишь при явной причине в плане "
+    "(слабая секретность, много людей, нереалистичность); при защите ниже 35 нападение почти всегда достигает цели "
+    "(major или partial). «Предотвращено» — не вариант по умолчанию. "
     "Ориентир при полном успехе дан ниже — НЕ занижай его: нереалистично малые потери для крупного успеха недопустимы. "
     "ВОЕННЫЙ УДАР (style=«военный удар»: ракеты, авиация, артиллерия, БПЛА — действие государства, НЕ теракт): "
     "нападавших и задержанных нет — att_killed=att_arrested=att_escaped=0; major — боеприпасы достигли цели, "
@@ -533,8 +536,9 @@ async def execute_attack(bot, user, spec: dict, chat_id: int = None, thread_id: 
         mod, guard = spec["role_mod"], cs_t["sec"] + cs_t[spec["group"]]
     parts = {"основа": world.security(target), "место/должность": mod, "усиления": guard,
              "напряжённость": t0.get(target, 0) * 0.15, "оценка ИИ": adj}
-    sec = max(5.0, min(98.0, sum(parts.values())))
-    detail = ", ".join(f"{k} {v:+.0f}" for k, v in parts.items() if round(v))
+    sec = max(5.0, min(98.0, sum(parts.values()) * C.SECURITY_FACTOR))
+    detail = ", ".join(f"{k} {v:+.0f}" for k, v in parts.items() if round(v)) + (
+        f", коэфф. ×{C.SECURITY_FACTOR:g}" if C.SECURITY_FACTOR != 1 else "")
     bf = min(1.0, math.log10(spec["budget"] / 1e4 + 1) / 2.0)
     pq = plan_score(spec, bf, cs_a["intel"])
     secrecy = min(30.0, 12 * math.log10(n)) if n > 3 else 0.0   # много людей — трудно сохранить тайну
@@ -550,7 +554,7 @@ async def execute_attack(bot, user, spec: dict, chat_id: int = None, thread_id: 
     if judged:
         fkey = judged["outcome"]
         rank = {"foiled": 0, "partial": 1, "major": 2}
-        if rank[dice_key] > rank[fkey] and random.random() < 0.7:     # нейросеть склонна «спасать» — формула получает право голоса
+        if rank[dice_key] > rank[fkey] and random.random() < C.JUDGE_OVERRIDE:     # нейросеть склонна «спасать» — формула получает право голоса
             fkey = dice_key
         outcome = fkey if terror else {"major": "killed", "partial": "wounded", "foiled": "failed"}[fkey]
         res["outcome"] = outcome
