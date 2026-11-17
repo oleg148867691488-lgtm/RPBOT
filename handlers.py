@@ -21,6 +21,7 @@ from telegram.ext import ContextTypes
 
 import config as C
 import database as db
+import world
 from auth import is_staff
 from llm import ask, search_web
 from rptime import get_rp_datetime
@@ -28,7 +29,7 @@ from textutils import (
     Cooldown, esc, fit_texts, match_tags, parse_fact_line, shorten,
 )
 from tg import reply_llm, safe_reply, send_typing, thread_id_of
-from worldbank import get_economic_context
+from worldbank import find_countries, get_economic_context
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +40,6 @@ _summarizing: set = set()
 _bg_tasks: set = set()
 
 _SKIP_TAG_PREFIXES = ("world_", "игрок_")
-_SECRET_RE = re.compile(r"#(?:секрет|чертеж|чертёж)\d?(?![\w])", re.I)
 
 
 # =====================================================================
@@ -164,20 +164,21 @@ async def save_fact_from_message(update: Update, context: ContextTypes.DEFAULT_T
     is_world = (bool(world_chat) and chat_id == world_chat
                 and thread_id == world_thread and not is_facts)
 
-    if not (is_facts or is_world or is_staff(user.id) or (msg.chat.type == "private" and _SECRET_RE.search(text))):
-        return False
-
     parsed = parse_fact_line(text)
     if not parsed:
-        if msg.chat.type == "private":
+        if (is_facts or is_world or is_staff(user.id)) and msg.chat.type == "private":
             await safe_reply(msg, "ℹ️ Формат: <code>#тег текст факта (год)</code>")
         return False
     tags, fact_text, year = parsed
-    marker = next((t for t in tags if re.fullmatch(r"(?:секрет|чертеж|чертёж)\d?", t)), None)
-    if marker:                                   # секретная новость / чертёж (для шпионажа): в обычные факты не попадает
-        from spy import save_secret
-        return await save_secret(context.bot, msg, tags, marker, fact_text, user, is_staff(user.id))
-    from spy import auto_secret                  # без тегов: ГМ-ИИ сам решает, секретна ли новость
+
+    own_country = False
+    if msg.chat.type == "private" and not (is_facts or is_world or is_staff(user.id)):
+        iso = next((i for t in tags for i in find_countries(t)), None)
+        own_country = bool(iso) and iso == world.mycountry(user.id)
+    if not (is_facts or is_world or is_staff(user.id) or own_country):
+        return False
+
+    from spy import auto_secret                  # ГМ-ИИ сам решает по смыслу, секретна ли новость — без тегов
     if await auto_secret(context.bot, msg, tags, fact_text, user, is_staff(user.id)):
         return True
 
@@ -577,6 +578,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.strip().lower() in ("откат", "/откат") and is_staff(msg.from_user.id):   # «откат» словом, без команды
         from gamecmds import rollback_command
         await rollback_command(update, context)
+        return
+
+    pni = context.user_data.get("pending_news_idea")
+    if pni and is_staff(msg.from_user.id) and time.time() - pni < 600 and not text.startswith("#"):
+        context.user_data.pop("pending_news_idea", None)
+        from gamecmds import newsidea_from_text
+        await newsidea_from_text(update, context, text)
         return
 
     pm = context.user_data.get("pending_move")                # (война, чат, время): следующее сообщение — ход в войне

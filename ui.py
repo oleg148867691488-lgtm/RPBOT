@@ -6,6 +6,7 @@ UI.PY — новый интерфейс бота прямо в Telegram: одн�
 """
 
 import asyncio
+import time
 import hashlib
 import logging
 import re
@@ -22,7 +23,7 @@ import world
 import config as C
 import database as db
 from auth import is_owner, is_staff
-from events import EMOJI, MODE_NAMES, PER_DAY, create_event
+from events import EMOJI, EVENTS, MODE_NAMES, PER_DAY, create_event
 from handlers import facts_target, normal_tag_names, world_target
 from rptime import get_rp_datetime, now_msk
 from textutils import Cooldown, esc, match_tags, shorten
@@ -315,7 +316,7 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     await q.answer(toast)
 
-    staff_only = {"ad", "st", "wh", "sf", "sw", "ads", "ex", "im", "ch", "ft", "df", "dy", "ev", "evm", "evr", "ol", "rb", "rby", "rbn"}
+    staff_only = {"ad", "st", "wh", "sf", "sw", "ads", "ex", "im", "ch", "ft", "df", "dy", "ev", "evm", "evr", "evk", "evb", "evi", "ol", "rb", "rby", "rbn"}
     if (kind in staff_only and not staff) or (kind in ("dz", "cy") and not owner):
         await edit_html(q, "❌ Доступ закрыт.", kb(HOME))
         return
@@ -408,15 +409,35 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, markup = events_admin_screen()
         await edit_html(q, text, markup)
 
-    elif kind == "evr":
+    elif kind in ("evr", "evk", "evb"):
+        if not world_target()[0]:
+            await edit_html(q, "❌ Тема мировых новостей не задана. Открой нужную тему и нажми «🌍 Эта тема = мировые».",
+                            kb([B("⬅️ Назад", callback_data="ui:ev")]))
+        elif kind == "evb":
+            await edit_html(q, "⏳ <i>Генерирую 3 события подряд…</i>")
+            heads = []
+            for _ in range(3):
+                r = await create_event(context.bot)
+                heads.append(f"✅ {esc(r['head'])}" if r else "❌ не получилось")
+            await edit_html(q, "\n".join(heads), kb([B("🎲×3 ещё", callback_data="ui:evb")], [B("⬅️ Назад", callback_data="ui:ev")]))
+        else:
+            ev_kind = p[2] if kind == "evk" and len(p) > 2 and p[2] in EVENTS else None
+            await edit_html(q, "⏳ <i>Генерирую событие…</i>")
+            r = await create_event(context.bot, ev_kind)
+            msg_text = f"✅ Опубликовано: <b>{esc(r['head'])}</b>" if r else "❌ Не получилось (нейросеть не ответила, попробуй ещё раз)."
+            again = f"ui:evk:{ev_kind}" if ev_kind else "ui:evr"
+            await edit_html(q, msg_text, kb([B("🎲 Ещё одно", callback_data=again)], [B("⬅️ Назад", callback_data="ui:ev")]))
+
+    elif kind == "evi":
         if not world_target()[0]:
             await edit_html(q, "❌ Тема мировых новостей не задана. Открой нужную тему и нажми «🌍 Эта тема = мировые».",
                             kb([B("⬅️ Назад", callback_data="ui:ev")]))
         else:
-            await edit_html(q, "⏳ <i>Генерирую событие…</i>")
-            r = await create_event(context.bot)
-            msg_text = f"✅ Опубликовано: <b>{esc(r['head'])}</b>" if r else "❌ Не получилось (нейросеть не ответила)."
-            await edit_html(q, msg_text, kb([B("🎲 Ещё одно", callback_data="ui:evr")], [B("⬅️ Назад", callback_data="ui:ev")]))
+            context.user_data["pending_news_idea"] = time.time()
+            await edit_html(q, "💡 <b>Напиши идею новости</b> одним сообщением (10 минут) — бот сам оформит её в заметку, "
+                               "подберёт вид события и страну, учтёт обстановку и эпоху.\n"
+                               "Например: «в Германии нашли подделку выборов» или «обвал нефти из-за ОПЕК».",
+                            kb([B("↩️ Отмена", callback_data="ui:ev")]))
 
     elif kind == "ol":
         text, markup = await ops_log_screen()
@@ -727,10 +748,15 @@ def events_admin_screen():
         f"Тема мировых: {'✅' if wc else '❌ не задана (/saveworld)'}\n\n"
         "Бот сам публикует: теракты (редко), кибератаки, курсы и криптобиржу, митинги, забастовки, "
         "пропаганду, утраты, инциденты (очень редко) и мировые шоки (ещё реже).\n"
-        "<i>Реальных людей по имени нет — только должности и вымышленные персонажи.</i>"
+        "<i>Реальных людей по имени нет — только должности и вымышленные персонажи.</i>\n\n"
+        "👇 Выбери вид для разовой генерации, запусти сразу несколько или дай свою идею — бот оформит её сам."
     )
     row = [B(("• " if k == mode else "") + MODE_NAMES[k].split(" (")[0], callback_data=f"ui:evm:{k}") for k in PER_DAY]
-    return text, kb(row[:2], row[2:], [B("🎲 Сгенерировать сейчас", callback_data="ui:evr")],
+    kinds = [B(f"{EVENTS[k]['emoji']} {EVENTS[k]['name']}", callback_data=f"ui:evk:{k}") for k in EVENTS]
+    krows = [kinds[i:i + 3] for i in range(0, len(kinds), 3)]
+    return text, kb(row[:2], row[2:], *krows,
+                    [B("🎲 Случайное", callback_data="ui:evr"), B("🎲×3", callback_data="ui:evb")],
+                    [B("💡 Своя идея", callback_data="ui:evi")],
                     [B("⬅️ В админ-панель", callback_data="ui:ad"), HOME[0]])
 
 
