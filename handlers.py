@@ -177,6 +177,9 @@ async def save_fact_from_message(update: Update, context: ContextTypes.DEFAULT_T
     if marker:                                   # секретная новость / чертёж (для шпионажа): в обычные факты не попадает
         from spy import save_secret
         return await save_secret(context.bot, msg, tags, marker, fact_text, user, is_staff(user.id))
+    from spy import auto_secret                  # без тегов: ГМ-ИИ сам решает, секретна ли новость
+    if await auto_secret(context.bot, msg, tags, fact_text, user, is_staff(user.id)):
+        return True
 
     added = await db.arun(_store_fact, tags, fact_text, user.id, user.username or "", year, is_world)
 
