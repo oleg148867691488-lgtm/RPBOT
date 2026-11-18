@@ -55,6 +55,28 @@ EVENTS = {
     "shock": dict(emoji="🌐", name="Мировой шок", weight=0.15, sev=(5, 5), two=False, tension=10,
                   shocks={"gold": .06, "oil": .05, "crypto": -.08},
                   brief="крупнейший за десятилетие мировой кризис (масштабный теракт или потрясение, меняющее политику многих стран); без графических подробностей"),
+    "diplomacy": dict(emoji="🤝", name="Дипломатия", weight=2.5, sev=(1, 2), two=True, tension=-8, shocks={"stocks": .01},
+                      brief="дипломатический прорыв между двумя странами: саммит, договор, визит или торговая сделка; "
+                            "хорошая новость, снижающая напряжённость"),
+    "alliance": dict(emoji="🫱", name="Альянс", weight=1.2, sev=(1, 2), two=True, tension=-6, shocks={},
+                     brief="создание или расширение военного либо экономического блока/альянса между странами"),
+    "discovery": dict(emoji="🔬", name="Открытие", weight=1.5, sev=(1, 2), two=False, tension=-3, shocks={"stocks": .02},
+                      brief="научное открытие или находка месторождения, укрепляющие экономику страны (без технических деталей)"),
+    "election": dict(emoji="🗳", name="Выборы", weight=1.5, sev=(1, 2), two=False, tension=3, shocks={},
+                     brief="выборы, референдум или смена правительства по итогам голосования (мирная передача власти, "
+                           "без главы государства по имени)"),
+    "corruption": dict(emoji="🗂", name="Коррупция", weight=2.0, sev=(1, 3), two=False, tension=7, shocks={"stocks": -.01},
+                       brief="коррупционный скандал среди чиновников (НЕ глава государства) и начатое расследование"),
+    "trade_war": dict(emoji="📦", name="Торговая война", weight=1.8, sev=(2, 3), two=True, tension=8, shocks={"stocks": -.02},
+                      brief="торговый спор между двумя странами: пошлины, эмбарго или санкции, удар по обеим экономикам"),
+    "disaster": dict(emoji="🌪", name="Стихия", weight=2.0, sev=(2, 4), two=False, tension=5, shocks={"oil": .015, "gold": .01},
+                     brief="крупное стихийное бедствие (ураган, наводнение, землетрясение, пожар), разрушения и помощь пострадавшим; "
+                           "без графических подробностей жертв"),
+    "pandemic": dict(emoji="🦠", name="Эпидемия", weight=0.6, sev=(2, 4), two=False, tension=9, shocks={"stocks": -.025, "oil": -.015},
+                     brief="вспышка заболевания, нагрузка на систему здравоохранения и экономику; масштаб и меры соответствуют эпохе"),
+    "coup": dict(emoji="🪖", name="Переворот", weight=0.25, sev=(3, 5), two=False, tension=25, shocks={"gold": .02, "stocks": -.03},
+                brief="попытка государственного переворота или военного мятежа против правительства (успех, провал или подавление — "
+                      "на усмотрение); без главы государства по имени и без описания насилия"),
 }
 EMOJI = {k: v["emoji"] for k, v in EVENTS.items()}
 EMOJI["attack"] = "🎯"
@@ -68,6 +90,11 @@ ALIASES = {
     "рынок": "market", "биржа": "market", "курс": "market", "крипт": "market",
     "митинг": "protest", "протест": "protest", "забастов": "strike", "пропаганд": "propaganda",
     "смерть": "death", "утрата": "death", "инцидент": "incident", "казус": "incident", "шок": "shock",
+    "дипломат": "diplomacy", "переговор": "diplomacy", "саммит": "diplomacy", "альянс": "alliance", "блок": "alliance",
+    "открыти": "discovery", "месторожден": "discovery", "выбор": "election", "референдум": "election",
+    "коррупц": "corruption", "взятк": "corruption", "торгов": "trade_war", "тариф": "trade_war", "эмбарго": "trade_war",
+    "стихи": "disaster", "катастроф": "disaster", "землетряс": "disaster", "наводнен": "disaster", "ураган": "disaster",
+    "эпидеми": "pandemic", "пандеми": "pandemic", "болезн": "pandemic", "переворот": "coup", "путч": "coup", "мятеж": "coup",
 }
 PER_DAY = {"off": 0, "calm": 2, "normal": 5, "hot": 10}
 MODE_NAMES = {"off": "⏸ Выключены", "calm": "😴 Тихо (~2/день)", "normal": "📰 Норма (~5/день)", "hot": "🔥 Жарко (~10/день)"}
@@ -142,7 +169,8 @@ async def build_context(iso: str, big: bool = False) -> str:
 _assess_cache: dict = {}
 FORMATS = ["сухая сводка агентства", "репортаж с места событий", "короткая срочная новость",
            "заметка с комментарием вымышленного эксперта", "аналитическая заметка", "сообщение пресс-службы и реакция"]
-EFFECTS = {"protest": {"sec": -3}, "strike": {"sec": -2}, "cyber": {"intel": -2}, "terror": {"sec": -2}}
+EFFECTS = {"protest": {"sec": -3}, "strike": {"sec": -2}, "cyber": {"intel": -2}, "terror": {"sec": -2},
+           "coup": {"sec": -8, "gov": -6}, "corruption": {"gov": -3}, "pandemic": {"sec": -2}, "disaster": {"sec": -1}}
 ASSESS_SYSTEM = (
     "Ты — аналитик РП-игры. По фактам оцени социальную обстановку в стране и верни ТОЛЬКО JSON: "
     '{"stability": 0-100 (100 — полное спокойствие), "grievances": ["до 3 коротких причин недовольства, ТОЛЬКО если они '
@@ -202,7 +230,7 @@ async def check_consistency(text: str, ctx: str, year=None):
     return bool(data.get("ok", True)), str(data.get("why", ""))
 
 
-async def generate_text(ev: dict, kind: str, isos: list, sev: int, rp_year, extra: str):
+async def generate_text(ev: dict, kind: str, isos: list, sev: int, rp_year, extra: str, idea: str = ""):
     ev = dict(ev)
     if rp_year:                                    # сюжет подстраивается под эпоху
         if kind == "cyber" and rp_year < 1985:
@@ -220,6 +248,7 @@ async def generate_text(ev: dict, kind: str, isos: list, sev: int, rp_year, extr
             + ".\nПричина события должна вытекать из фактов выше; ничего не выдумывай вопреки им. "
             "Выбери правдоподобное место (город/регион) внутри страны. "
             f"Формат подачи: {random.choice(FORMATS)}.\n"
+            + (f"ИДЕЯ АДМИНА (воплоти СУТЬ, но не копируй формулировку дословно): {idea}\n" if idea else "")
             + ("НЕДАВНИЕ ЗАГОЛОВКИ (не повторяй их структуру, слова и сюжет — будь разнообразным):\n- " + "\n- ".join(recent) if recent else ""))
     for _ in range(3):
         text = await ask("summary", [
@@ -239,6 +268,14 @@ async def generate_text(ev: dict, kind: str, isos: list, sev: int, rp_year, extr
         return text.strip()
     log.info("Событие %s отброшено: противоречит контексту или повторяется", kind)
     return None
+
+
+def guess_kind(idea: str) -> str:
+    low = idea.lower()
+    for word, k in ALIASES.items():
+        if word in low:
+            return k
+    return random.choice(list(EVENTS))
 
 
 def split_headline(text: str):
@@ -283,11 +320,14 @@ def _persist(kind, iso, sev, text, rp_year, fact_tag, fact_text, m, t, cs=None, 
         world.save_cstate(iso, cs)
 
 
-async def create_event(bot, kind: str = None, isos: list = None, announce: bool = True):
+async def create_event(bot, kind: str = None, isos: list = None, announce: bool = True, idea: str = ""):
     """Создаёт и публикует событие. Возвращает словарь с итогом или None (нет темы мировых/сбой модели)."""
     if announce and not world_target()[0]:
         return None
     forced = kind in EVENTS
+    if not forced and idea:
+        kind = guess_kind(idea)
+        forced = True
     at_war = bool(world.wars())
     boost = {"terror": 3.0, "propaganda": 2.0, "cyber": 2.0, "incident": 2.0, "protest": 1.5} if at_war else {}
     kind = kind if kind in EVENTS else random.choices(
@@ -327,7 +367,7 @@ async def create_event(bot, kind: str = None, isos: list = None, announce: bool 
             extra = f"Факт рынка: {name} {'вырос' if move > 0 else 'упал'} примерно на {abs(move) * 100:.0f}% за сутки."
         scaled = {k: v * sev / 3 for k, v in shocks.items() if world.asset_active(k)}
 
-    text = await generate_text(ev, kind, isos, sev, rp.get("year"), extra)
+    text = await generate_text(ev, kind, isos, sev, rp.get("year"), extra, idea)
     if not text:
         log.warning("Событие %s не создано: модель не ответила", kind)
         return None
@@ -383,6 +423,12 @@ FOLLOW = {
     "military": [("propaganda", 0.7), ("market", 0.7), ("protest", 0.4), ("incident", 0.5)],
     "war": [("market", 0.5), ("propaganda", 0.6), ("protest", 0.3)],
     "spy": [("propaganda", 0.5), ("incident", 0.15)],
+    "coup": [("protest", 0.7), ("propaganda", 0.5), ("market", 0.6)],
+    "corruption": [("protest", 0.4), ("propaganda", 0.3)],
+    "trade_war": [("market", 0.6), ("propaganda", 0.3)],
+    "disaster": [("market", 0.3), ("protest", 0.15)],
+    "pandemic": [("market", 0.5), ("strike", 0.2), ("protest", 0.2)],
+    "election": [("propaganda", 0.2)],
 }
 
 

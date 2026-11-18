@@ -648,9 +648,10 @@ async def vs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 KIND_GROUPS = {
     "a": None,
-    "t": ["terror", "incident", "shock", "attack", "military", "war", "spy"],
-    "e": ["market", "cyber", "strike"],
-    "s": ["protest", "propaganda", "death", "decree"],
+    "t": ["terror", "incident", "shock", "attack", "military", "war", "spy", "coup"],
+    "e": ["market", "cyber", "strike", "trade_war", "disaster", "pandemic"],
+    "s": ["protest", "propaganda", "death", "decree", "corruption", "election"],
+    "p": ["diplomacy", "alliance", "discovery"],
 }
 
 
@@ -672,7 +673,7 @@ async def news_screen(f: str = "a", page: int = 0):
         lines.append(f"{EMOJI.get(r['kind'], '📰')} <b>{esc(head)}</b>")
         lines.append(f"{esc(shorten(body, 240))}")
         lines.append(f"<i>📍 {esc(where)}{year}</i>\n")
-    names = [("a", "Все"), ("t", "🔥 Конфликты"), ("e", "💹 Экономика"), ("s", "👥 Общество")]
+    names = [("a", "Все"), ("t", "🔥 Конфликты"), ("e", "💹 Экономика"), ("s", "👥 Общество"), ("p", "🕊 Позитив")]
     filt = [B(("• " if k == f else "") + n, callback_data=f"ui:nw:{k}:0") for k, n in names]
     nav = []
     if page > 0:
@@ -680,7 +681,7 @@ async def news_screen(f: str = "a", page: int = 0):
     nav.append(B(f"{page + 1}/{pages}", callback_data=f"ui:nw:{f}:{page}"))
     if page < pages - 1:
         nav.append(B("▶️", callback_data=f"ui:nw:{f}:{page + 1}"))
-    return "\n".join(lines), kb(filt[:2], filt[2:], nav, HOME)
+    return "\n".join(lines), kb(filt[:3], filt[3:], nav, HOME)
 
 
 def market_screen():
@@ -746,8 +747,9 @@ def events_admin_screen():
         "🎲 <b>СОБЫТИЯ МИРА</b>\n\n"
         f"Режим: <b>{esc(MODE_NAMES.get(mode, mode))}</b>\n"
         f"Тема мировых: {'✅' if wc else '❌ не задана (/saveworld)'}\n\n"
-        "Бот сам публикует: теракты (редко), кибератаки, курсы и криптобиржу, митинги, забастовки, "
-        "пропаганду, утраты, инциденты (очень редко) и мировые шоки (ещё реже).\n"
+        "Бот сам публикует: теракты, кибератаки, биржу, митинги, забастовки, пропаганду, утраты, инциденты и "
+        "мировые шоки (редкие); а также дипломатию, альянсы, открытия, выборы, коррупцию, торговые войны, стихии, "
+        "эпидемии и перевороты (редкие, самые тяжёлые — реже всего).\n"
         "<i>Реальных людей по имени нет — только должности и вымышленные персонажи.</i>\n\n"
         "👇 Выбери вид для разовой генерации, запусти сразу несколько или дай свою идею — бот оформит её сам."
     )
