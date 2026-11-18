@@ -133,3 +133,9 @@ WAR_VERDICT_COOLDOWN = _float("WAR_VERDICT_COOLDOWN", 600.0)   # пауза ме
 DEFAULT_SECURITY = _int("DEFAULT_SECURITY", 35)       # базовая защита страны (0-100), если админ не задал /security
 SECURITY_FACTOR = _float("SECURITY_FACTOR", 0.7)      # общий множитель защиты в операциях: меньше — атаки чаще удаются
 JUDGE_OVERRIDE = _float("JUDGE_OVERRIDE", 0.85)       # как часто расчёт вероятностей перебивает «предотвращено» от нейросети
+
+# === РАЗВЕДКА (/intel) — прокачка без нейросети, быстро и предсказуемо ===
+INTEL_COOLDOWN_PLAYER = _float("INTEL_COOLDOWN_PLAYER", 300.0)
+INTEL_COOLDOWN_STAFF = _float("INTEL_COOLDOWN_STAFF", 20.0)
+INTEL_LIMIT_PLAYER = _int("INTEL_LIMIT_PLAYER", 5)
+INTEL_LIMIT_STAFF = _int("INTEL_LIMIT_STAFF", 30)

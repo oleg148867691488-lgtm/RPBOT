@@ -787,11 +787,12 @@ async def country_screen(user):
              f"🏳️ Базовая защита (задаёт ГМ): <b>{world.security(iso)}</b>/100  ·  общее усиление: <b>{st['sec']:+.0f}</b>",
              f"🌡 Напряжённость: <code>{bar(tens / 100)}</code> {tens:.0f}/100", ""]
     for label, k in rows:
-        lines.append(f"{label}\n      <code>{bar(st[k] / caps[k][1], 10)}</code> {st[k]:.0f}/{caps[k][1]:.0f}")
+        extra = f" · уровень {world.intel_level(iso)}/5" if k == "intel" else ""
+        lines.append(f"{label}{extra}\n      <code>{bar(st[k] / caps[k][1], 10)}</code> {st[k]:.0f}/{caps[k][1]:.0f}")
     if acts:
         lines += ["", "📜 <b>Последние решения:</b>"] + [f"▪️ {esc(shorten(a['summary'] or '', 100))}" for a in acts]
-    lines += ["", "<i>Усилить: <code>/action усилил охрану президента</code>. Усиления слабеют со временем, "
-                  "а нейросеть-ГМ оценивает реализм.</i>"]
+    lines += ["", "<i>Усилить охрану: <code>/action усилил охрану президента</code>. Прокачать разведку: "
+                  "<code>/intel 300к</code>. Усиления слабеют со временем.</i>"]
     return "\n".join(lines), kb([B("🔄 Обновить", callback_data="ui:mc")], HOME)
 
 

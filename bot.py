@@ -100,6 +100,7 @@ async def post_init(app: Application):
         BotCommand("market", "Биржа"),
         BotCommand("op", "Тайная операция"),
         BotCommand("spy", "Шпионаж: кража секретов"),
+        BotCommand("intel", "Прокачать разведку страны"),
         BotCommand("war", "Войны: ходы и меню"),
         BotCommand("war_verdict", "Вердикт по войне"),
         BotCommand("action", "Решение своей страны"),
@@ -184,6 +185,7 @@ def main():
     app.add_handler(CommandHandler("spy", gc.spy_command))
     app.add_handler(CommandHandler("loot", gc.loot_command))
     app.add_handler(CommandHandler("agents", gc.agents_command))
+    app.add_handler(CommandHandler("intel", gc.intel_command))
     app.add_handler(CommandHandler("secrets", gc.secrets_command))
     app.add_handler(CommandHandler("delsecret", gc.delsecret_command))
     app.add_handler(CommandHandler("peace", gc.peace_command))
@@ -196,6 +198,7 @@ def main():
     app.add_handler(CommandHandler("mycountry", gc.mycountry_command))
     app.add_handler(CommandHandler("security", gc.security_command))
     app.add_handler(CommandHandler("event", gc.event_command))
+    app.add_handler(CommandHandler("newsidea", gc.newsidea_command))
     app.add_handler(CommandHandler("ops", gc.ops_command))
     app.add_handler(CommandHandler("verdict", verdict_command))
     app.add_handler(CommandHandler("info", cmd.info_command))

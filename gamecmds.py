@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import re
 import time
 from datetime import datetime, timezone
@@ -28,6 +29,7 @@ from worldbank import ISO_RU, find_countries
 log = logging.getLogger(__name__)
 _op_cd = Cooldown()
 _act_cd = Cooldown()
+_intel_cd = Cooldown()
 
 OP_USAGE = ("Используй: <code>/op президент США 100к от Франции</code>\n"
             "должность цели · страна цели · бюджет · «от» страна-заказчик\n"
@@ -427,3 +429,89 @@ async def agents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines += [f"{'✅' if a['active'] else '☠️'} {esc(ISO_RU.get(a['target'], a['target']))} · {spy.RANK_RU.get(a['rank'], '')} "
               f"(уровень {a['rank']}/3){'' if a['active'] else ' — раскрыт'}" for a in rows]
     await safe_reply(msg, "\n".join(lines))
+
+
+async def newsidea_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE, idea: str):
+    msg = update.effective_message
+    if not world_target()[0]:
+        await safe_reply(msg, "❌ Тема мировых новостей не задана: открой нужную тему и нажми «🌍 Эта тема = мировые» (/saveworld).")
+        return
+    status = await safe_reply(msg, "💡 <i>Оформляю идею в новость…</i>")
+    from events import create_event
+    isos = find_countries(idea)
+    r = await create_event(context.bot, isos=isos[:1] if isos else None, idea=idea[:600])
+    await safe_reply(msg, f"✅ Опубликовано: <b>{esc(r['head'])}</b>" if r else "❌ Не получилось (нейросеть не ответила), попробуй переформулировать.")
+    try:
+        await status.delete()
+    except Exception:
+        pass
+
+
+@staff_only
+async def newsidea_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    idea = " ".join(context.args or []).strip()
+    if not idea:
+        context.user_data["pending_news_idea"] = time.time()
+        await safe_reply(update.effective_message, "💡 Напиши идею новости одним сообщением (10 минут) — бот оформит её сам, "
+                                                    "подберёт вид события, страну, учтёт обстановку и эпоху.")
+        return
+    await newsidea_from_text(update, context, idea)
+
+
+INTEL_HELP = (
+    "🕵️ <b>РАЗВЕДКА</b>\n\n"
+    "Вложи бюджет в разведслужбу своей страны: <code>/intel 300к</code>\n\n"
+    "Чем выше уровень разведки — тем легче:\n"
+    "▫️ 🗝 украсть чужие секреты и внедрить агентов (<code>/spy</code>)\n"
+    "▫️ 🛡 защитить СВОИ секреты и агентов в своём правительстве от чужой разведки\n"
+    "▫️ 🎯 точнее планировать операции (влияет на оценку плана)\n\n"
+    "Вложения действуют с убывающей отдачей и со временем слабеют, как и другие усиления."
+)
+
+
+async def intel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg, user = update.effective_message, update.effective_user
+    iso = world.mycountry(user.id)
+    text = " ".join(context.args or []).strip()
+    if not text:
+        if not iso:
+            await safe_reply(msg, INTEL_HELP + "\n\n🏳️ Сначала задай страну: <code>/mycountry Россия</code>")
+            return
+        lvl = world.intel_level(iso)
+        raw = world.cstate(iso)["intel"]
+        await safe_reply(msg, INTEL_HELP + f"\n\n🏳️ {esc(ISO_RU.get(iso, iso))}: уровень <b>{lvl}/5</b> "
+                                           f"(<code>{'▰' * lvl}{'▱' * (5 - lvl)}</code>, {raw:.0f}/30)")
+        return
+    if not iso:
+        await safe_reply(msg, "🏳️ Сначала задай страну: <code>/mycountry Россия</code>")
+        return
+    budget = ops.parse_budget(text)
+    if not budget or budget < 1000:
+        await safe_reply(msg, "❌ Укажи бюджет, например: <code>/intel 300к</code>")
+        return
+    budget = min(budget, 50_000_000)
+    staff = is_staff(user.id)
+    wait = _intel_cd.hit(user.id, C.INTEL_COOLDOWN_STAFF if staff else C.INTEL_COOLDOWN_PLAYER)
+    if wait:
+        await safe_reply(msg, f"⏳ Разведка уже работает над прошлым вложением. Подожди {int(wait) + 1} с.")
+        return
+    limit = C.INTEL_LIMIT_STAFF if staff else C.INTEL_LIMIT_PLAYER
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if await db.arun(db.get_usage, user.id, today, "intel") >= limit:
+        _intel_cd.reset(user.id)
+        await safe_reply(msg, f"⏳ Лимит вложений в разведку на сегодня исчерпан ({limit}/{limit}).")
+        return
+
+    bf = min(1.0, math.log10(budget / 1e4 + 1) / 2.2)   # 1 000$ → почти 0, 1 млн$ → близко к максимуму
+    delta = 1 + 9 * bf
+    before = world.intel_level(iso)
+    async with world.state_lock:
+        st = world.cstate(iso)
+        applied = world.apply_action(st, {"intel": delta})
+        world.save_cstate(iso, st)
+    await db.arun(db.inc_usage, user.id, today, "intel")
+    after = world.intel_level(iso)
+    level_line = f"\n🎉 <b>Новый уровень разведки: {after}/5!</b>" if after > before else ""
+    await safe_reply(msg, f"🕵️ <b>Вложено ${budget:,} в разведку {esc(ISO_RU.get(iso, iso))}.</b>\n"
+                          f"Прирост: {applied.get('intel', 0):+.1f} → <b>{st['intel']:.1f}</b>/30 "
+                          f"(уровень {after}/5){level_line}")

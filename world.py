@@ -282,3 +282,8 @@ async def rollback_event(event_id: int) -> str:
     extra = ("отменены напряжённость, биржа и защита" if eff else
              "последствия не отменены — для старых новостей они не сохранялись")
     return f"✅ Новость откачена: удалена из ленты и мировых фактов; {extra}."
+
+
+def intel_level(iso: str) -> int:
+    """Уровень разведки 0-5 для отображения и сообщений (сырое значение — cstate(iso)['intel'], 0..30)."""
+    return max(0, min(5, round(cstate(iso)["intel"] / 6)))
