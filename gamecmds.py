@@ -515,3 +515,24 @@ async def intel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_reply(msg, f"🕵️ <b>Вложено ${budget:,} в разведку {esc(ISO_RU.get(iso, iso))}.</b>\n"
                           f"Прирост: {applied.get('intel', 0):+.1f} → <b>{st['intel']:.1f}</b>/30 "
                           f"(уровень {after}/5){level_line}")
+
+
+@staff_only
+async def treasury_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    import finance
+    msg = update.effective_message
+    text = " ".join(context.args or [])
+    isos = find_countries(text)
+    if not isos:
+        await safe_reply(msg, "Используй: <code>/treasury Россия</code> (посмотреть) или "
+                              "<code>/treasury Россия 50млн</code> (задать базовую казну)")
+        return
+    iso = isos[0]
+    budget = ops.parse_budget(text)
+    name = esc(ISO_RU.get(iso, iso))
+    if not budget:
+        tr = finance.treasury(iso)
+        await safe_reply(msg, f"💰 Казна <b>{name}</b>: <code>${tr['cur']:,.0f}</code> / база ${tr['base']:,.0f}".replace(",", " "))
+        return
+    await db.arun(world.set_treasury, iso, budget)
+    await safe_reply(msg, f"💰 Казна <b>{name}</b> установлена: <code>${budget:,.0f}</code>".replace(",", " "))

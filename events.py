@@ -155,6 +155,10 @@ async def build_context(iso: str, big: bool = False) -> str:
         lines.append("Идущие войны: " + "; ".join(f"{_name(x)} — {_name(y)}" for x, y in wars))
         for fr in await db.arun(db.war_front_for, iso):         # положение на фронте — чтобы новости ему не противоречили
             lines.append(f"Фронт ({_name(fr['a'])} — {_name(fr['b'])}): {shorten(fr['front'], 320)}")
+    tr = world.get_treasury(iso)
+    if tr and tr["base"] and tr["cur"] < tr["base"] * 0.97:
+        lines.append(f"Казна страны недосчитывается {100 * (1 - tr['cur'] / tr['base']):.0f}% (скрытые хищения и утечки): "
+                     "возможны задержки выплат, недовольство, коррупционные расследования.")
     names = normal_tag_names(await db.arun(db.get_all_tags))
     matched = match_tags(names, _name(iso).lower())
     facts = await db.arun(db.get_recent_facts, matched, 20 if big else 8, False) if matched else []
@@ -429,6 +433,7 @@ FOLLOW = {
     "disaster": [("market", 0.3), ("protest", 0.15)],
     "pandemic": [("market", 0.5), ("strike", 0.2), ("protest", 0.2)],
     "election": [("propaganda", 0.2)],
+    "divert": [("corruption", 0.5), ("protest", 0.15)],
 }
 
 

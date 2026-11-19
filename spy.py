@@ -14,6 +14,7 @@ import logging
 import math
 import random
 import re
+import time
 
 import config as C
 import database as db
@@ -198,7 +199,8 @@ async def execute_spy(bot, user, spec: dict) -> str:
         items = await db.arun(db.find_secrets, target, spec["kind"], "") or await _ai_secret(spec, rp)
     t0 = world.tension()
     cs_t, cs_a = world.cstate(target), world.cstate(actor)
-    ci = world.security(target) + cs_t["sec"] + 0.5 * cs_t["gov"] + 0.6 * cs_t["intel"] + t0.get(target, 0) * 0.1   # контрразведка цели: охрана + её собственная разведка
+    ci = max(0.0, world.security(target) + cs_t["sec"] + 0.5 * cs_t["gov"] + 0.6 * cs_t["intel"]
+          + t0.get(target, 0) * 0.1 - world.leverage(user.id, target) * 3)   # охрана + её разведка − твой компромат на неё
     bf = min(1.0, math.log10(spec["budget"] / 1e4 + 1) / 2.0)
     pq = plan_score(spec, bf, cs_a["intel"])
     plan = plan_text({**spec, "plan_q": spec["plan_q"]}, pq)
@@ -315,7 +317,8 @@ async def execute_infiltrate(bot, user, spec: dict) -> str:
     rp = get_rp_datetime()
     t0 = world.tension()
     cs_t, cs_a = world.cstate(target), world.cstate(actor)
-    ci = world.security(target) + cs_t["sec"] + 0.5 * cs_t["gov"] + 0.6 * cs_t["intel"] + t0.get(target, 0) * 0.1
+    ci = max(0.0, world.security(target) + cs_t["sec"] + 0.5 * cs_t["gov"] + 0.6 * cs_t["intel"]
+          + t0.get(target, 0) * 0.1 - world.leverage(user.id, target) * 3)
     bf = min(1.0, math.log10(spec["budget"] / 1e4 + 1) / 2.0)
     pq = plan_score(spec, bf, cs_a["intel"])
     p_ok = max(0.03, min(0.8, 0.10 + 0.5 * bf * (1 - (rank * 18 + 0.4 * ci) / 130) + cs_a["intel"] * 0.01 + (pq - 50) * 0.003 - cs_t["intel"] * 0.01))
@@ -372,7 +375,7 @@ async def notify_agents(bot, iso: str, sid: int, kind: str, level: int, title: s
     """Новый секрет страны сразу уходит в личку агентам, внедрённым в её правительство (чем выше ранг, тем вероятнее)."""
     tn = ISO_RU.get(iso, iso)
     for ag in await db.arun(db.active_agents):
-        if ag["target"] != iso or ag["owner_id"] == author_id or ag["rank"] + 2 < level:
+        if ag["target"] != iso or ag["owner_id"] == author_id or ag["rank"] + 2 < level or (ag.get("dormant_until") or 0) > time.time():
             continue
         if random.random() < {1: 0.3, 2: 0.6, 3: 1.0}.get(ag["rank"], 0.3):
             await db.arun(db.add_loot, ag["owner_id"], sid, iso, kind, title + " (от агента)", text)
@@ -385,7 +388,7 @@ async def notify_agents(bot, iso: str, sid: int, kind: str, level: int, title: s
 
 async def agents_tick(bot):
     """Раз в тик мира: чистки в аппарате, донесения агентов, случайные провалы."""
-    agents = await db.arun(db.active_agents)
+    agents = [a for a in await db.arun(db.active_agents) if (a.get("dormant_until") or 0) <= time.time()]   # спящие молчат и неуязвимы
     by_target = {}
     for ag in agents:
         by_target.setdefault(ag["target"], []).append(ag)
@@ -429,8 +432,9 @@ async def agents_tick(bot):
 # ШПИОНАЖ ЗА СТРАНОЙ И ДЕЙСТВИЯ ЧЕРЕЗ АГЕНТОВ
 # =====================================================================
 
-def _base(spec: dict, cs_a: dict, cs_t: dict, t0: dict):
-    ci = world.security(spec["target"]) + cs_t["sec"] + 0.5 * cs_t["gov"] + 0.6 * cs_t["intel"] + t0.get(spec["target"], 0) * 0.1
+def _base(spec: dict, cs_a: dict, cs_t: dict, t0: dict, user_id: int = 0):
+    ci = max(0.0, world.security(spec["target"]) + cs_t["sec"] + 0.5 * cs_t["gov"] + 0.6 * cs_t["intel"]
+              + t0.get(spec["target"], 0) * 0.1 - world.leverage(user_id, spec["target"]) * 3)
     bf = min(1.0, math.log10(spec["budget"] / 1e4 + 1) / 2.0)
     pq = plan_score(spec, bf, cs_a["intel"])
     return ci, bf, pq
@@ -487,7 +491,7 @@ async def execute_surveil(bot, user, spec: dict) -> str:
     rp = get_rp_datetime()
     t0 = world.tension()
     cs_t, cs_a = world.cstate(target), world.cstate(actor)
-    ci, bf, pq = _base(spec, cs_a, cs_t, t0)
+    ci, bf, pq = _base(spec, cs_a, cs_t, t0, user.id)
     bonus = min(0.25, 0.08 * await db.arun(db.agent_rank_sum, user.id, target))
     p_ok = max(0.05, min(0.9, 0.25 + 0.45 * bf * (1 - ci / 160) + cs_a["intel"] * 0.01 + (pq - 50) * 0.003 + bonus * 1.5 - cs_t["intel"] * 0.01))
     r = random.random()
@@ -537,7 +541,7 @@ async def execute_agent_op(bot, user, spec: dict) -> str:
     rp = get_rp_datetime()
     t0 = world.tension()
     cs_t, cs_a = world.cstate(target), world.cstate(actor)
-    ci, bf, pq = _base(spec, cs_a, cs_t, t0)
+    ci, bf, pq = _base(spec, cs_a, cs_t, t0, user.id)
     p_ok = max(0.05, min(0.9, 0.25 + 0.2 * rank + 0.4 * bf * (1 - ci / 150) + (pq - 50) * 0.003 + cs_a["intel"] * 0.01 - cs_t["intel"] * 0.01))
     success = random.random() < p_ok
     p_burn = max(0.03, min(0.7, 0.1 + ci / 200 + (0.15 if task == "sabotage" else 0.08) - 0.03 * rank))

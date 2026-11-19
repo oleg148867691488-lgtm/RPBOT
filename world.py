@@ -287,3 +287,33 @@ async def rollback_event(event_id: int) -> str:
 def intel_level(iso: str) -> int:
     """Уровень разведки 0-5 для отображения и сообщений (сырое значение — cstate(iso)['intel'], 0..30)."""
     return max(0, min(5, round(cstate(iso)["intel"] / 6)))
+
+
+# ---------------- казна стран и «рычаги» (компромат) ----------------
+
+def get_treasury(iso: str):
+    return _load("treasury", {}).get(iso)
+
+
+def set_treasury(iso: str, base: float, cur: float = None):
+    d = _load("treasury", {})
+    d[iso] = {"base": float(base), "cur": float(base if cur is None else cur)}
+    db.set_setting("treasury", json.dumps(d))
+
+
+def add_treasury(iso: str, delta: float):
+    d = _load("treasury", {})
+    if iso in d:
+        d[iso]["cur"] = max(0.0, d[iso]["cur"] + delta)
+        db.set_setting("treasury", json.dumps(d))
+
+
+def leverage(user_id: int, iso: str) -> int:
+    return int(_load("leverage", {}).get(str(user_id), {}).get(iso, 0))
+
+
+def add_leverage(user_id: int, iso: str, n: int = 1):
+    d = _load("leverage", {})
+    u = d.setdefault(str(user_id), {})
+    u[iso] = max(0, min(5, u.get(iso, 0) + n))
+    db.set_setting("leverage", json.dumps(d))

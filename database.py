@@ -741,8 +741,10 @@ def _create_extra_tables():
     execute("""CREATE TABLE IF NOT EXISTS agents (
         id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER NOT NULL, actor TEXT, target TEXT NOT NULL,
         rank INTEGER NOT NULL, planted TEXT NOT NULL, active INTEGER DEFAULT 1)""")
+    execute("""CREATE TABLE IF NOT EXISTS funds (
+        user_id INTEGER NOT NULL, iso TEXT NOT NULL, dirty REAL DEFAULT 0, clean REAL DEFAULT 0, PRIMARY KEY (user_id, iso))""")
     for stmt in ("ALTER TABLE war_state ADD COLUMN control TEXT DEFAULT ''", "ALTER TABLE war_state ADD COLUMN fnum TEXT DEFAULT ''",
-                 "ALTER TABLE secrets ADD COLUMN source TEXT DEFAULT 'rp'"):
+                 "ALTER TABLE secrets ADD COLUMN source TEXT DEFAULT 'rp'", "ALTER TABLE agents ADD COLUMN dormant_until REAL DEFAULT 0"):
         try:
             execute(stmt)
         except Exception:
@@ -876,3 +878,30 @@ def get_secret(secret_id: int):
 
 def war_set_fnum(war_id: int, fnum_json: str):
     execute("UPDATE war_state SET fnum = ? WHERE id = ?", (fnum_json, war_id))
+
+
+def get_funds(user_id: int) -> list:
+    return execute("SELECT iso, dirty, clean FROM funds WHERE user_id = ? AND (dirty > 0.5 OR clean > 0.5) ORDER BY dirty + clean DESC", (user_id,))
+
+
+def add_funds(user_id: int, iso: str, dirty: float = 0.0, clean: float = 0.0):
+    with _lock:
+        rows = execute("SELECT dirty, clean FROM funds WHERE user_id = ? AND iso = ?", (user_id, iso))
+        if rows:
+            execute("UPDATE funds SET dirty = ?, clean = ? WHERE user_id = ? AND iso = ?",
+                    (max(0.0, rows[0]["dirty"] + dirty), max(0.0, rows[0]["clean"] + clean), user_id, iso))
+        else:
+            execute("INSERT INTO funds (user_id, iso, dirty, clean) VALUES (?, ?, ?, ?)", (user_id, iso, max(0.0, dirty), max(0.0, clean)))
+
+
+def get_agent(agent_id: int):
+    rows = execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
+    return rows[0] if rows else None
+
+
+def set_agent_rank(agent_id: int, rank: int):
+    execute("UPDATE agents SET rank = ? WHERE id = ?", (rank, agent_id))
+
+
+def set_dormant(agent_id: int, until: float):
+    execute("UPDATE agents SET dormant_until = ? WHERE id = ?", (until, agent_id))
