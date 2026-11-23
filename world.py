@@ -176,6 +176,8 @@ def save_cstate(iso: str, st: dict):
 def decay_cstate(allst: dict, factor: float = 0.998):
     for iso in list(allst):
         for k in list(allst[iso]):
+            if k == "intel":                      # разведка — постоянное вложение, со временем не слабеет
+                continue
             allst[iso][k] = round(allst[iso][k] * factor, 2)
         if all(abs(v) < 0.3 for v in allst[iso].values()):
             del allst[iso]

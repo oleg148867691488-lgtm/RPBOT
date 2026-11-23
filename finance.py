@@ -15,6 +15,7 @@ import math
 import random
 import time
 
+import agency
 import config as C
 import database as db
 import ops
@@ -33,16 +34,16 @@ log = logging.getLogger(__name__)
 DEFAULT_TREASURY = 20_000_000.0
 
 
-def treasury(iso: str) -> dict:
+async def treasury(iso: str) -> dict:
     tr = world.get_treasury(iso)
     if not tr:
-        world.set_treasury(iso, DEFAULT_TREASURY)
+        await db.arun(world.set_treasury, iso, DEFAULT_TREASURY)
         tr = world.get_treasury(iso)
     return tr
 
 
-def _active_agent(user_id: int, target: str, min_rank: int = 1):
-    agents = [a for a in db.list_agents(user_id) if a["active"] and a["target"] == target
+async def _active_agent(user_id: int, target: str, min_rank: int = 1):
+    agents = [a for a in await db.arun(db.list_agents, user_id) if a["active"] and a["target"] == target
               and a["rank"] >= min_rank and (a.get("dormant_until") or 0) <= time.time()]
     return max(agents, key=lambda a: a["rank"]) if agents else None
 
@@ -79,13 +80,13 @@ async def divert_command(update, context):
         return
     dest = " ".join(args[2:]).strip() or ISO_RU.get(target, target) + " (собств. счёт)"
 
-    ag = _active_agent(user.id, target, min_rank=3)
+    ag = await _active_agent(user.id, target, min_rank=3)
     if not ag:
         await safe_reply(msg, f"❌ Нет действующего агента 3 уровня в правительстве страны "
                               f"<b>{esc(ISO_RU.get(target, target))}</b> (спящие и раскрытые не считаются).")
         return
 
-    tr = treasury(target)
+    tr = await treasury(target)
     amount = min(amount, tr["cur"] * 0.5)
     if amount < 1000:
         await safe_reply(msg, "❌ В казне почти ничего не осталось брать.")
@@ -94,15 +95,16 @@ async def divert_command(update, context):
     t0 = world.tension()
     ci = world.security(target) + world.cstate(target)["sec"] + 0.5 * world.cstate(target)["gov"] \
         + t0.get(target, 0) * 0.1 - world.leverage(user.id, target) * 3
-    p_burn = _risk(amount, tr["base"], max(0.0, ci)) * (1.3 - 0.1 * ag["rank"])
+    p_burn = (_risk(amount, tr["base"], max(0.0, ci)) * (1.3 - 0.1 * ag["rank"]) * await agency.agent_risk_mult(ag)
+              * max(0.5, 1 - 0.04 * agency.parse_skills(ag.get("skills"))["finance"]))   # скрытность, шифровальный отдел, финансы
     caught = random.random() < max(0.03, min(0.9, p_burn))
     share = amount / max(tr["base"], 1.0)
 
     async with world.state_lock:
-        world.add_treasury(target, -amount)
+        await db.arun(world.add_treasury, target, -amount)
         if caught:
             clawback = amount * random.uniform(0.3, 0.7)
-            world.add_treasury(target, clawback)
+            await db.arun(world.add_treasury, target, clawback)
             amount -= clawback
         else:
             clawback = 0.0
@@ -165,8 +167,10 @@ async def launder_command(update, context):
         await safe_reply(msg, "❌ Укажи сумму не меньше 1000, не превышающую остаток на счёте.")
         return
 
-    fee = min(0.35, 0.15 + 0.10 * math.log10(amount / 50_000 + 1))
-    risk = min(0.4, 0.08 * math.log10(amount / 20_000 + 1))
+    fin = await agency.best_skill(user.id, "finance")
+    hq_l = await db.arun(db.get_hq, user.id)
+    fee = min(0.35, 0.15 + 0.10 * math.log10(amount / 50_000 + 1)) * max(0.5, 1 - 0.03 * fin)
+    risk = min(0.4, 0.08 * math.log10(amount / 20_000 + 1)) * agency.risk_factor(hq_l["cipher"], 0) * max(0.5, 1 - 0.04 * fin)
     caught = random.random() < max(0.02, risk)
     clean = amount * (1 - fee)
 
@@ -213,14 +217,14 @@ async def compromise_command(update, context):
                               "попробует добыть компромат на чиновников вместо прямой кражи.")
         return
     target = isos[0]
-    ag = _active_agent(user.id, target)
+    ag = await _active_agent(user.id, target)
     if not ag:
         await safe_reply(msg, f"❌ Нет действующего агента в правительстве <b>{esc(ISO_RU.get(target, target))}</b>.")
         return
     t0 = world.tension()
     ci = max(0.0, world.security(target) + world.cstate(target)["sec"] + 0.5 * world.cstate(target)["gov"]
              + t0.get(target, 0) * 0.1 - world.leverage(user.id, target) * 3)
-    p_ok = max(0.1, min(0.7, 0.35 + 0.05 * ag["rank"] - ci / 300))
+    p_ok = max(0.1, min(0.7, 0.35 + 0.05 * ag["rank"] - ci / 300 + await agency.op_bonus(user.id, "analysis")))
     r = random.random()
     tn = ISO_RU.get(target, target)
     if r < p_ok:

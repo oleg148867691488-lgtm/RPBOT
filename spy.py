@@ -16,6 +16,7 @@ import random
 import re
 import time
 
+import agency
 import config as C
 import database as db
 import ops
@@ -214,7 +215,8 @@ async def execute_spy(bot, user, spec: dict) -> str:
     item = items[0]
     level = item["level"]
     agent_bonus = min(0.25, 0.08 * await db.arun(db.agent_rank_sum, user.id, target))   # агенты в правительстве цели
-    p_ok = max(0.01, min(0.85, (0.08 + 0.55 * bf * (1 - (level * 14 + 0.35 * ci) / 130) + cs_a["intel"] * 0.01 + (pq - 50) * 0.003 + agent_bonus - cs_t["intel"] * 0.01) * GUARD.get(level, 1.0)))
+    steal_bonus = await agency.op_bonus(user.id, "tech")
+    p_ok = max(0.01, min(0.85, (0.08 + 0.55 * bf * (1 - (level * 14 + 0.35 * ci) / 130) + cs_a["intel"] * 0.01 + (pq - 50) * 0.003 + agent_bonus - cs_t["intel"] * 0.01 + steal_bonus) * GUARD.get(level, 1.0)))
     r = random.random()
     outcome = "success" if r < p_ok else "partial" if r < p_ok + 0.12 * GUARD.get(level, 1.0) else "fail"
     p_caught = max(0.03, min(0.9, 0.2 + ci / 250 + level * 0.03 - cs_a["intel"] / 300 - (pq - 50) * 0.002))
@@ -314,6 +316,15 @@ async def execute_infiltrate(bot, user, spec: dict) -> str:
     target, actor = spec["target"], spec["actor"]
     tn, an = ISO_RU.get(target, target), ISO_RU.get(actor, actor)
     rank = spec.get("rank", 1)
+    recs = await db.arun(db.list_recruits, user.id)
+    if not recs:
+        return ("🕴 <b>Нет свободных агентов.</b> Агентов нужно нанимать за деньги: <code>/hire</code> (кандидаты с резюме), "
+                "потом снова <code>/spy</code>.")
+    rec = max(recs, key=lambda r: (agency.parse_skills(r["skills"])["infiltration"], r["loyalty"]))
+    rsk = agency.parse_skills(rec["skills"])
+    hq_lv = await db.arun(db.get_hq, user.id)
+    risk_m = agency.risk_factor(hq_lv["cipher"], rsk["stealth"])
+    inf_bonus = 0.025 * rsk["infiltration"] + 0.02 * hq_lv["tech"]
     rp = get_rp_datetime()
     t0 = world.tension()
     cs_t, cs_a = world.cstate(target), world.cstate(actor)
@@ -321,15 +332,18 @@ async def execute_infiltrate(bot, user, spec: dict) -> str:
           + t0.get(target, 0) * 0.1 - world.leverage(user.id, target) * 3)
     bf = min(1.0, math.log10(spec["budget"] / 1e4 + 1) / 2.0)
     pq = plan_score(spec, bf, cs_a["intel"])
-    p_ok = max(0.03, min(0.8, 0.10 + 0.5 * bf * (1 - (rank * 18 + 0.4 * ci) / 130) + cs_a["intel"] * 0.01 + (pq - 50) * 0.003 - cs_t["intel"] * 0.01))
+    p_ok = max(0.03, min(0.8, 0.10 + 0.5 * bf * (1 - (rank * 18 + 0.4 * ci) / 130) + cs_a["intel"] * 0.01 + (pq - 50) * 0.003 - cs_t["intel"] * 0.01 + inf_bonus))
     success = random.random() < p_ok
-    caught = (not success) and random.random() < max(0.03, min(0.85, 0.12 + ci / 250 + rank * 0.05 - cs_a["intel"] / 300 - (pq - 50) * 0.002))
+    caught = (not success) and random.random() < max(0.03, min(0.85, (0.12 + ci / 250 + rank * 0.05 - cs_a["intel"] / 300 - (pq - 50) * 0.002) * risk_m))
     revealed = "none"
     if caught:
         x = random.random()
         revealed = "sponsor" if x < 0.55 else "false" if x < 0.8 else "unknown"
     if success:
-        await db.arun(db.add_agent, user.id, actor, target, rank)
+        await db.arun(db.add_agent, user.id, actor, target, rank, rec["name"], rec["bio"], rec["skills"], rec["loyalty"])
+        await db.arun(db.delete_recruit, rec["id"])
+    elif caught:
+        await db.arun(db.delete_recruit, rec["id"])          # агента арестовали
     scandal = False
     if caught and revealed == "sponsor":
         h = "Шпионский скандал"
@@ -350,6 +364,7 @@ async def execute_infiltrate(bot, user, spec: dict) -> str:
     reveal = {"sponsor": "🔍 <b>Вас вычислили!</b> Следы ведут в вашу страну.", "false": "🎭 Следы ведут в другую страну.",
               "unknown": "🚔 Агентов взяли, но вас не назвали.", "none": "🕶 Следов нет."}[revealed]
     out = (f"🕵️ <b>ОТЧЁТ · ВНЕДРЕНИЕ АГЕНТА</b>\n\n🎯 Цель: <b>{esc(tn)}</b> · {RANK_RU[rank]} (уровень {rank}/3)\n"
+           f"👤 Агент: <b>{esc(rec['name'])}</b> · внедрение {rsk['infiltration']}, скрытность {rsk['stealth']}\n"
            f"🏳️ Заказчик: {esc(an)}  ·  💼 Бюджет: <b>${spec['budget']:,}</b>"
            + (f" <i>({esc(spec['budget_note'])})</i>" if spec["budget_note"] else "") + f"\n📋 {plan_text(spec, pq)}\n"
            f"🛡 Контрразведка цели: <b>{ci:.0f}</b>\n🎲 Шанс внедрения был ≈ {p_ok * 100:.0f}%\n\n"
@@ -381,7 +396,7 @@ async def notify_agents(bot, iso: str, sid: int, kind: str, level: int, title: s
             await db.arun(db.add_loot, ag["owner_id"], sid, iso, kind, title + " (от агента)", text)
             await _dm(bot, ag["owner_id"], f"🕴 <b>Агент в правительстве ({esc(tn)}) передаёт секретную новость</b> (уровень {level}/5):\n"
                                            f"<blockquote>{esc(shorten(text, 1200))}</blockquote>")
-            if random.random() < 0.01 * level * (1 + world.cstate(iso)["intel"] / 30):   # своя разведка ловит агентов лучше
+            if random.random() < 0.01 * level * (1 + world.cstate(iso)["intel"] / 30) * await agency.agent_risk_mult(ag):   # своя разведка ловит агентов лучше
                 await db.arun(db.burn_agent, ag["id"])
                 await _dm(bot, ag["owner_id"], f"☠️ <b>Агент в {esc(tn)} засветился при передаче и выведен из строя.</b>")
 
@@ -393,12 +408,14 @@ async def agents_tick(bot):
     for ag in agents:
         by_target.setdefault(ag["target"], []).append(ag)
     burned_ids = set()
+    hq_cache = {}
     for t, lst in by_target.items():                                   # «чистка»: страна выкашивает агентуру разом
         tn = ISO_RU.get(t, t)
         own_intel = world.cstate(t)["intel"]
         p = 0.004 * (1 + world.tension().get(t, 0) / 50) * (2 if world.at_war(t) else 1) * (1 + own_intel / 30)
         if random.random() < p:
-            hit = [ag for ag in lst if random.random() < max(0.15, min(0.9, 0.45 - 0.07 * ag["rank"] + own_intel / 100))]
+            mults = {ag["id"]: await agency.agent_risk_mult(ag, hq_cache) for ag in lst}
+            hit = [ag for ag in lst if random.random() < max(0.15, min(0.9, 0.45 - 0.07 * ag["rank"] + own_intel / 100)) * mults[ag["id"]]]
             for ag in hit:
                 burned_ids.add(ag["id"])
                 await db.arun(db.burn_agent, ag["id"])
@@ -414,7 +431,7 @@ async def agents_tick(bot):
         t, rank = ag["target"], ag["rank"]
         tn = ISO_RU.get(t, t)
         sec = world.security(t) + world.cstate(t)["sec"] + 0.8 * world.cstate(t)["intel"]
-        if random.random() < min(0.08, 0.004 + max(0.0, sec) / 15000):          # агента раскрыли (своя разведка цели ловит лучше)
+        if random.random() < min(0.08, 0.004 + max(0.0, sec) / 15000) * await agency.agent_risk_mult(ag, hq_cache):          # агента раскрыли (своя разведка цели ловит лучше)
             await db.arun(db.burn_agent, ag["id"])
             await _dm(bot, ag["owner_id"], f"🕴 <b>Агент в правительстве ({esc(tn)}) раскрыт</b> и выведен из строя.")
             continue
@@ -493,7 +510,8 @@ async def execute_surveil(bot, user, spec: dict) -> str:
     cs_t, cs_a = world.cstate(target), world.cstate(actor)
     ci, bf, pq = _base(spec, cs_a, cs_t, t0, user.id)
     bonus = min(0.25, 0.08 * await db.arun(db.agent_rank_sum, user.id, target))
-    p_ok = max(0.05, min(0.9, 0.25 + 0.45 * bf * (1 - ci / 160) + cs_a["intel"] * 0.01 + (pq - 50) * 0.003 + bonus * 1.5 - cs_t["intel"] * 0.01))
+    svc = await agency.op_bonus(user.id, "analysis")
+    p_ok = max(0.05, min(0.9, 0.25 + 0.45 * bf * (1 - ci / 160) + cs_a["intel"] * 0.01 + (pq - 50) * 0.003 + bonus * 1.5 - cs_t["intel"] * 0.01 + svc))
     r = random.random()
     outcome = "success" if r < p_ok else "partial" if r < p_ok + 0.2 else "fail"
     caught = random.random() < max(0.02, min(0.6, 0.1 + ci / 300 - cs_a["intel"] / 300 - (pq - 50) * 0.0015)) * (0.5 if outcome == "success" else 1.0)
@@ -542,7 +560,7 @@ async def execute_agent_op(bot, user, spec: dict) -> str:
     t0 = world.tension()
     cs_t, cs_a = world.cstate(target), world.cstate(actor)
     ci, bf, pq = _base(spec, cs_a, cs_t, t0, user.id)
-    p_ok = max(0.05, min(0.9, 0.25 + 0.2 * rank + 0.4 * bf * (1 - ci / 150) + (pq - 50) * 0.003 + cs_a["intel"] * 0.01 - cs_t["intel"] * 0.01))
+    p_ok = max(0.05, min(0.9, 0.25 + 0.2 * rank + 0.4 * bf * (1 - ci / 150) + (pq - 50) * 0.003 + cs_a["intel"] * 0.01 - cs_t["intel"] * 0.01 + await agency.op_bonus(user.id, "stealth")))
     success = random.random() < p_ok
     p_burn = max(0.03, min(0.7, 0.1 + ci / 200 + (0.15 if task == "sabotage" else 0.08) - 0.03 * rank))
     burned = random.random() < p_burn * (0.6 if success else 1.4)

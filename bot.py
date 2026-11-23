@@ -26,6 +26,7 @@ import commands as cmd
 import config as C
 import database as db
 import events
+import agency
 import finance
 import gamecmds as gc
 import ui
@@ -105,6 +106,8 @@ async def post_init(app: Application):
         BotCommand("divert", "Вывести деньги через агента"),
         BotCommand("launder", "Отмыть деньги"),
         BotCommand("funds", "Твои счета"),
+        BotCommand("hire", "Нанять агента"),
+        BotCommand("hq", "Штаб агентства"),
         BotCommand("war", "Войны: ходы и меню"),
         BotCommand("war_verdict", "Вердикт по войне"),
         BotCommand("action", "Решение своей страны"),
@@ -188,7 +191,12 @@ def main():
     app.add_handler(CommandHandler("war_verdict", wars.verdict_command))
     app.add_handler(CommandHandler("spy", gc.spy_command))
     app.add_handler(CommandHandler("loot", gc.loot_command))
-    app.add_handler(CommandHandler("agents", gc.agents_command))
+    app.add_handler(CommandHandler("agents", agency.agents_command))
+    app.add_handler(CommandHandler("hire", agency.hire_command))
+    app.add_handler(CommandHandler("train", agency.train_command))
+    app.add_handler(CommandHandler("hq", agency.hq_command))
+    app.add_handler(CommandHandler("fire", agency.fire_command))
+    app.add_handler(CommandHandler("givefunds", agency.givefunds_command))
     app.add_handler(CommandHandler("intel", gc.intel_command))
     app.add_handler(CommandHandler("divert", finance.divert_command))
     app.add_handler(CommandHandler("launder", finance.launder_command))

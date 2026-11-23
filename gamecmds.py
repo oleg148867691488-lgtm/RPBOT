@@ -508,7 +508,7 @@ async def intel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with world.state_lock:
         st = world.cstate(iso)
         applied = world.apply_action(st, {"intel": delta})
-        world.save_cstate(iso, st)
+        await db.arun(world.save_cstate, iso, st)
     await db.arun(db.inc_usage, user.id, today, "intel")
     after = world.intel_level(iso)
     level_line = f"\n🎉 <b>Новый уровень разведки: {after}/5!</b>" if after > before else ""
@@ -531,7 +531,7 @@ async def treasury_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     budget = ops.parse_budget(text)
     name = esc(ISO_RU.get(iso, iso))
     if not budget:
-        tr = finance.treasury(iso)
+        tr = await finance.treasury(iso)
         await safe_reply(msg, f"💰 Казна <b>{name}</b>: <code>${tr['cur']:,.0f}</code> / база ${tr['base']:,.0f}".replace(",", " "))
         return
     await db.arun(world.set_treasury, iso, budget)

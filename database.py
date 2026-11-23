@@ -743,8 +743,18 @@ def _create_extra_tables():
         rank INTEGER NOT NULL, planted TEXT NOT NULL, active INTEGER DEFAULT 1)""")
     execute("""CREATE TABLE IF NOT EXISTS funds (
         user_id INTEGER NOT NULL, iso TEXT NOT NULL, dirty REAL DEFAULT 0, clean REAL DEFAULT 0, PRIMARY KEY (user_id, iso))""")
+    execute("""CREATE TABLE IF NOT EXISTS candidates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER NOT NULL, name TEXT, bio TEXT, skills TEXT,
+        loyalty INTEGER, price REAL, created REAL)""")
+    execute("""CREATE TABLE IF NOT EXISTS recruits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER NOT NULL, name TEXT, bio TEXT, skills TEXT,
+        loyalty INTEGER, hired REAL)""")
+    execute("""CREATE TABLE IF NOT EXISTS hq (
+        user_id INTEGER PRIMARY KEY, hq INTEGER DEFAULT 0, tech INTEGER DEFAULT 0, cipher INTEGER DEFAULT 0, academy INTEGER DEFAULT 0)""")
     for stmt in ("ALTER TABLE war_state ADD COLUMN control TEXT DEFAULT ''", "ALTER TABLE war_state ADD COLUMN fnum TEXT DEFAULT ''",
-                 "ALTER TABLE secrets ADD COLUMN source TEXT DEFAULT 'rp'", "ALTER TABLE agents ADD COLUMN dormant_until REAL DEFAULT 0"):
+                 "ALTER TABLE secrets ADD COLUMN source TEXT DEFAULT 'rp'", "ALTER TABLE agents ADD COLUMN dormant_until REAL DEFAULT 0",
+                 "ALTER TABLE agents ADD COLUMN name TEXT DEFAULT ''", "ALTER TABLE agents ADD COLUMN bio TEXT DEFAULT ''",
+                 "ALTER TABLE agents ADD COLUMN skills TEXT DEFAULT ''", "ALTER TABLE agents ADD COLUMN loyalty INTEGER DEFAULT 50"):
         try:
             execute(stmt)
         except Exception:
@@ -843,10 +853,10 @@ def war_front_for(iso: str) -> list:
     return execute("SELECT a, b, front FROM war_state WHERE (a = ? OR b = ?) AND front != '' ORDER BY id DESC LIMIT 2", (iso, iso))
 
 
-def add_agent(owner_id, actor, target, rank) -> int:
+def add_agent(owner_id, actor, target, rank, name="", bio="", skills="", loyalty=50) -> int:
     with _lock:
-        execute("INSERT INTO agents (owner_id, actor, target, rank, planted) VALUES (?, ?, ?, ?, ?)",
-                (owner_id, actor, target, rank, _now()))
+        execute("INSERT INTO agents (owner_id, actor, target, rank, planted, name, bio, skills, loyalty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (owner_id, actor, target, rank, _now(), name, bio, skills, loyalty))
         return execute("SELECT last_insert_rowid() AS id")[0]["id"]
 
 
@@ -905,3 +915,80 @@ def set_agent_rank(agent_id: int, rank: int):
 
 def set_dormant(agent_id: int, until: float):
     execute("UPDATE agents SET dormant_until = ? WHERE id = ?", (until, agent_id))
+
+
+# ---------------- кадры агентства ----------------
+
+def add_candidates(owner_id: int, rows: list):
+    for r in rows:
+        execute("INSERT INTO candidates (owner_id, name, bio, skills, loyalty, price, created) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (owner_id, r["name"], r["bio"], r["skills"], r["loyalty"], r["price"], time.time()))
+
+
+def get_candidates(owner_id: int, since: float) -> list:
+    return execute("SELECT * FROM candidates WHERE owner_id = ? AND created > ? ORDER BY id", (owner_id, since))
+
+
+def clear_candidates(owner_id: int):
+    execute("DELETE FROM candidates WHERE owner_id = ?", (owner_id,))
+
+
+def delete_candidate(cid: int):
+    execute("DELETE FROM candidates WHERE id = ?", (cid,))
+
+
+def add_recruit(owner_id, name, bio, skills_json, loyalty) -> int:
+    with _lock:
+        execute("INSERT INTO recruits (owner_id, name, bio, skills, loyalty, hired) VALUES (?, ?, ?, ?, ?, ?)",
+                (owner_id, name, bio, skills_json, loyalty, time.time()))
+        return execute("SELECT last_insert_rowid() AS id")[0]["id"]
+
+
+def list_recruits(owner_id: int) -> list:
+    return execute("SELECT * FROM recruits WHERE owner_id = ? ORDER BY id", (owner_id,))
+
+
+def get_recruit(rid: int):
+    rows = execute("SELECT * FROM recruits WHERE id = ?", (rid,))
+    return rows[0] if rows else None
+
+
+def delete_recruit(rid: int):
+    execute("DELETE FROM recruits WHERE id = ?", (rid,))
+
+
+def set_recruit_skills(rid: int, skills_json: str):
+    execute("UPDATE recruits SET skills = ? WHERE id = ?", (skills_json, rid))
+
+
+def set_agent_skills(aid: int, skills_json: str):
+    execute("UPDATE agents SET skills = ? WHERE id = ?", (skills_json, aid))
+
+
+def get_hq(user_id: int) -> dict:
+    rows = execute("SELECT hq, tech, cipher, academy FROM hq WHERE user_id = ?", (user_id,))
+    return dict(rows[0]) if rows else {"hq": 0, "tech": 0, "cipher": 0, "academy": 0}
+
+
+def set_hq_level(user_id: int, track: str, level: int):
+    assert track in ("hq", "tech", "cipher", "academy")
+    with _lock:
+        if not execute("SELECT 1 FROM hq WHERE user_id = ?", (user_id,)):
+            execute("INSERT INTO hq (user_id) VALUES (?)", (user_id,))
+        execute(f"UPDATE hq SET {track} = ? WHERE user_id = ?", (level, user_id))
+
+
+def spend_clean(user_id: int, amount: float) -> bool:
+    """Списывает чистые деньги со счетов (сначала с самых больших). False — не хватает."""
+    with _lock:
+        rows = execute("SELECT iso, clean FROM funds WHERE user_id = ? AND clean > 0 ORDER BY clean DESC", (user_id,))
+        if sum(r["clean"] for r in rows) + 1e-6 < amount:
+            return False
+        left = amount
+        for r in rows:
+            take = min(r["clean"], left)
+            execute("UPDATE funds SET clean = clean - ? WHERE user_id = ? AND iso = ?", (take, user_id, r["iso"]))
+            left -= take
+            if left <= 1e-6:
+                break
+        return True
