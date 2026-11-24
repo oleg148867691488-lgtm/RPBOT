@@ -439,7 +439,7 @@ async def newsidea_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE,
     status = await safe_reply(msg, "💡 <i>Оформляю идею в новость…</i>")
     from events import create_event
     isos = find_countries(idea)
-    r = await create_event(context.bot, isos=isos[:1] if isos else None, idea=idea[:600])
+    r = await create_event(context.bot, isos=isos[:2] if isos else None, idea=idea[:600])
     await safe_reply(msg, f"✅ Опубликовано: <b>{esc(r['head'])}</b>" if r else "❌ Не получилось (нейросеть не ответила), попробуй переформулировать.")
     try:
         await status.delete()
