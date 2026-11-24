@@ -210,6 +210,7 @@ def main():
     app.add_handler(CommandHandler("wars", gc.wars_command))
     app.add_handler(CommandHandler("addcountry", gc.addcountry_command))
     app.add_handler(CommandHandler(["rollback", "otkat"], gc.rollback_command))
+    app.add_handler(CommandHandler(["rollbackpost", "otkatpost"], gc.rollbackpost_command))
     app.add_handler(CommandHandler("news", gc.news_command))
     app.add_handler(CommandHandler("market", gc.market_command))
     app.add_handler(CommandHandler("tension", gc.tension_command))

@@ -316,7 +316,7 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     await q.answer(toast)
 
-    staff_only = {"ad", "st", "wh", "sf", "sw", "ads", "ex", "im", "ch", "ft", "df", "dy", "ev", "evm", "evr", "evk", "evb", "evi", "ol", "rb", "rby", "rbn"}
+    staff_only = {"ad", "st", "wh", "sf", "sw", "ads", "ex", "im", "ch", "ft", "df", "dy", "ev", "evm", "evr", "evk", "evb", "evi", "ol", "rb", "rby", "rbn", "fb", "fby", "fbn"}
     if (kind in staff_only and not staff) or (kind in ("dz", "cy") and not owner):
         await edit_html(q, "❌ Доступ закрыт.", kb(HOME))
         return
@@ -446,6 +446,19 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif kind == "rb":
         text, markup = await rollback_screen(int(p[2]) if len(p) > 2 and p[2].isdigit() else 0)
         await edit_html(q, text, markup)
+
+    elif kind == "fb":
+        off = int(p[2]) if len(p) > 2 and p[2].isdigit() else 0
+        aid = int(p[3]) if len(p) > 3 and p[3].lstrip("-").isdigit() else None
+        text, markup = await post_rollback_screen(off, aid)
+        await edit_html(q, text, markup)
+
+    elif kind == "fbn":
+        await edit_html(q, "↩️ Откат поста отменён.", kb([B("🏠 Меню", callback_data="ui:home")]))
+
+    elif kind == "fby":
+        result = await world.rollback_post(int(p[2]))
+        await edit_html(q, result, kb([B("↩️ Ещё откат постов", callback_data="ui:fb:0")], HOME))
 
     elif kind == "rbn":
         await edit_html(q, "↩️ Откат отменён.", kb([B("🏠 Меню", callback_data="ui:home")]))
@@ -796,6 +809,33 @@ async def country_screen(user):
     lines += ["", "<i>Усилить охрану: <code>/action усилил охрану президента</code>. Прокачать разведку: "
                   "<code>/intel 300к</code>. Усиления слабеют со временем.</i>"]
     return "\n".join(lines), kb([B("🔄 Обновить", callback_data="ui:mc")], HOME)
+
+
+async def post_rollback_screen(offset: int = 0, author_id=None):
+    """«Откатить этот пост игрока? Да / Нет» — листай кнопками к более старым постам, можно только посты одного автора."""
+    offset = max(0, offset)
+    rows = await db.arun(db.get_fact_log, 1, offset, author_id)
+    who = f" · автор <code>{author_id}</code>" if author_id else ""
+    if not rows:
+        return f"↩️ <b>ОТКАТ ПОСТОВ</b>{who}\n\nОткатывать нечего — постов нет.", kb(HOME)
+    r = rows[0]
+    tags = await db.arun(db.get_post_tags, r["author_id"], r["text"])
+    tag_line = " ".join("#" + t for t in tags) or "#" + r["tag"]
+    lines = ["↩️ <b>Откатить этот пост?</b>" + who, "",
+             f"👤 <b>{esc(r['author_name'] or 'без ника')}</b> (<code>{r['author_id']}</code>)",
+             f"🏷 {esc(tag_line)} · {r['year'] or 'год не указан'} · #{r['id']}",
+             esc(shorten(r["text"], 400)), "",
+             "<i>Пост исчезнет из базы фактов по всем тегам. Если ГМ из-за него менял защиту страны — это тоже отменится "
+             "(напряжённость не откатывается).</i>"]
+    suf = f":{author_id}" if author_id else ""
+    nav = []
+    if offset > 0:
+        nav.append(B("◀️ Новее", callback_data=f"ui:fb:{offset - 1}{suf}"))
+    nav.append(B("Старше ▶️", callback_data=f"ui:fb:{offset + 1}{suf}"))
+    rows_kb = [[B("✅ Да, откатить", callback_data=f"ui:fby:{r['id']}"), B("❌ Нет", callback_data="ui:fbn")], nav]
+    if not author_id and r["author_id"]:
+        rows_kb.append([B("👤 Только посты этого автора", callback_data=f"ui:fb:0:{r['author_id']}")])
+    return "\n".join(lines), kb(*rows_kb, HOME)
 
 
 async def rollback_screen(offset: int = 0):

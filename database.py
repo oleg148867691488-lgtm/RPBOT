@@ -715,6 +715,47 @@ def delete_world_event(event_id: int):
     execute("DELETE FROM world_events WHERE id = ?", (event_id,))
 
 
+def get_fact_log(limit: int = 1, offset: int = 0, author_id=None) -> list:
+    """Лента постов (фактов) игроков и админов — новые сверху. Можно отфильтровать по автору."""
+    if author_id:
+        return execute("SELECT * FROM facts WHERE is_verdict = 0 AND author_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+                       (author_id, limit, offset))
+    return execute("SELECT * FROM facts WHERE is_verdict = 0 ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset))
+
+
+def find_author_id(name: str):
+    """id автора по @юзернейму (берём из последних его постов)."""
+    rows = execute("SELECT author_id FROM facts WHERE lower(author_name) = ? AND author_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                   (name.lower().lstrip("@"),))
+    return rows[0]["author_id"] if rows else None
+
+
+def get_post_tags(author_id, text: str) -> list:
+    """Все теги, под которыми сохранён один и тот же пост (пост с несколькими #тегами лежит несколькими строками)."""
+    rows = execute("SELECT tag FROM facts WHERE author_id = ? AND text = ? AND is_verdict = 0", (author_id, text))
+    return [r["tag"] for r in rows]
+
+
+def delete_post(author_id, text: str) -> int:
+    """Удаляет пост целиком — по всем его тегам. Возвращает, сколько строк убрано."""
+    with _lock:
+        n = len(get_post_tags(author_id, text))
+        if n:
+            execute("DELETE FROM facts WHERE author_id = ? AND text = ? AND is_verdict = 0", (author_id, text))
+    _invalidate_tags()
+    return n
+
+
+def find_player_action(user_id, text: str):
+    """Решение ИИ-ГМ, принятое из-за этого поста (если новость задела защиту страны)."""
+    rows = execute("SELECT * FROM player_actions WHERE user_id = ? AND text = ? ORDER BY id DESC LIMIT 1", (user_id, text))
+    return rows[0] if rows else None
+
+
+def delete_player_action(action_id: int):
+    execute("DELETE FROM player_actions WHERE id = ?", (action_id,))
+
+
 def delete_fact_by_text(tag: str, text: str):
     execute("DELETE FROM facts WHERE tag = ? AND text = ?", (tag.lower().strip(), text))
     _invalidate_tags()

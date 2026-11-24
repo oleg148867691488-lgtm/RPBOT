@@ -575,6 +575,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await fn(update, context)
             return
 
+    if text.strip().lower() in ("откат поста", "откат постов") and is_staff(msg.from_user.id):
+        from gamecmds import rollbackpost_command
+        await rollbackpost_command(update, context)
+        return
+
     if text.strip().lower() in ("откат", "/откат") and is_staff(msg.from_user.id):   # «откат» словом, без команды
         from gamecmds import rollback_command
         await rollback_command(update, context)

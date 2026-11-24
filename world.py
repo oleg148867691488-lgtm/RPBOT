@@ -286,6 +286,43 @@ async def rollback_event(event_id: int) -> str:
     return f"✅ Новость откачена: удалена из ленты и мировых фактов; {extra}."
 
 
+def _rollback_post_db(author_id, text, act, cs_all):
+    n = db.delete_post(author_id, text)
+    if act:
+        db.delete_player_action(act["id"])
+    if cs_all is not None:
+        save_cstate_all(cs_all)
+    return n
+
+
+async def rollback_post(fact_id: int) -> str:
+    """Откат ПОСТА игрока: пост удаляется из базы фактов (по всем тегам), а если из-за него ГМ менял защиту страны — это тоже отменяется."""
+    row = await db.arun(db.get_fact, fact_id)
+    if not row:
+        return "❌ Пост уже удалён или не найден."
+    author, text = row["author_id"], row["text"]
+    act = await db.arun(db.find_player_action, author, text)
+    applied = {}
+    if act:
+        try:
+            applied = json.loads(act.get("effects") or "{}")
+        except ValueError:
+            applied = {}
+    async with state_lock:
+        cs_all = None
+        if act and applied and act.get("country"):
+            cs_all = cstate_all()
+            st = cstate(act["country"])
+            for k, v in applied.items():
+                if k in CAPS:
+                    lo, hi = CAPS[k]
+                    st[k] = round(max(lo, min(hi, st[k] - v)), 2)
+            cs_all[act["country"]] = st
+        n = await db.arun(_rollback_post_db, author, text, act, cs_all)
+    extra = "защита страны возвращена" if cs_all is not None else "на защиту страны пост не влиял"
+    return f"✅ Пост откачен: удалён из базы фактов (записей: {n}); {extra}."
+
+
 def intel_level(iso: str) -> int:
     """Уровень разведки 0-5 для отображения и сообщений (сырое значение — cstate(iso)['intel'], 0..30)."""
     return max(0, min(5, round(cstate(iso)["intel"] / 6)))
