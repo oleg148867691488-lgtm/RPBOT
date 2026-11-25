@@ -20,6 +20,7 @@ import time
 from telegram.constants import ParseMode
 
 import config as C
+import currencies
 import database as db
 import world
 from handlers import normal_tag_names, world_target
@@ -503,6 +504,7 @@ async def create_event(bot, kind: str = None, isos: list = None, announce: bool 
         await db.arun(_persist, kind, isos[0], sev, full, rp.get("year"),
                       f"world_{_name(isos[0]).lower()}", shorten(f"{head}. {body}", 600), m, t, cs,
                       world.effects_json(t0, t, scaled, {isos[0]: applied}))
+        await db.arun(currencies.react_all, {i: t.get(i, 0.0) - t0.get(i, 0.0) for i in isos})   # валюта страны реагирует на событие
 
     html_text = format_event(kind, isos, rp, head, body, market_line)
     posted = await publish(bot, html_text) if announce else False
@@ -563,6 +565,7 @@ async def tick(bot):
         cs = world.cstate_all()
         world.decay_cstate(cs)
         await db.arun(lambda: (world.save_market(m), world.save_tension(t), world.save_cstate_all(cs)))
+    await db.arun(currencies.tick)                          # курсы новых валют стран
     mode = db.get_setting("events_mode", "off")
     cap = PER_DAY.get(mode, 0)
     # сколько автособытий уже вышло за последние сутки (вместе с последствиями) — лимит режима не превышается

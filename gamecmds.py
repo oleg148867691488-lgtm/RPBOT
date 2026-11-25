@@ -361,6 +361,37 @@ async def rollback_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_reply(update.effective_message, text, reply_markup=markup)
 
 
+@staff_only
+async def strict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/strict add|del @ник|ID (или ответом) — особые личности с усиленным фильтром НРП; /strict list — список."""
+    from auth import set_strict, strict_ids
+    msg = update.effective_message
+    args = context.args or []
+    sub = args[0].lower() if args else "list"
+    if sub in ("list", "список", ""):
+        ids = sorted(strict_ids())
+        await safe_reply(msg, ("🛡 <b>Усиленный фильтр НРП</b>\n" + "\n".join(f"• <code>{i}</code>" for i in ids)) if ids else
+                         "🛡 Усиленный фильтр НРП пока ни для кого не включён.\n<i>Добавить: /strict add @ник (или ответом на сообщение)</i>")
+        return
+    if sub not in ("add", "del", "добавить", "убрать", "удалить"):
+        await safe_reply(msg, "Используй: <code>/strict add @ник</code>, <code>/strict del @ник</code> или <code>/strict list</code>")
+        return
+    target = None
+    if msg.reply_to_message and msg.reply_to_message.from_user:
+        target = msg.reply_to_message.from_user.id
+    elif len(args) > 1:
+        a = args[1]
+        target = int(a) if a.lstrip("-").isdigit() else await db.arun(db.find_author_id, a)
+    if not target:
+        await safe_reply(msg, "❌ Не нашёл игрока. Укажи ID, @ник (он должен был писать посты) или ответь на его сообщение.")
+        return
+    on = sub in ("add", "добавить")
+    changed = await db.arun(set_strict, target, on)
+    await safe_reply(msg, (f"🛡 Для <code>{target}</code> включена усиленная проверка НРП: проверяются все его факты, "
+                           "а NRP-посты не остаются в базе." if on else f"✅ С <code>{target}</code> усиленная проверка снята.")
+                     + ("" if changed else "\n<i>Так уже было.</i>"))
+
+
 async def otvet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/otvet Страна — что ответила свободная страна на ультиматум (решает ИИ-ГМ, ответ запоминается)."""
     from ultimatum import answer_ultimatum

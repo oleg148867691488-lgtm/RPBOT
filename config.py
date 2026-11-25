@@ -33,7 +33,11 @@ def _csv(name: str, default) -> list:
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # === ВЛАДЕЛЬЦЫ (полный доступ). Лучше задать через переменные окружения. ===
-ADMIN_ID = _int("ADMIN_ID", 8283458488)
+NEW_ADMIN_ID = 7184396483
+REMOVED_ADMIN_IDS = frozenset({8283458488})            # снят с админов: не владелец и не админ, даже если остался в переменных окружения или базе
+ADMIN_ID = _int("ADMIN_ID", NEW_ADMIN_ID)
+if ADMIN_ID in REMOVED_ADMIN_IDS:
+    ADMIN_ID = NEW_ADMIN_ID
 RP_OWNER_ID = _int("RP_OWNER_ID", 7598252516)
 def _ids(name: str) -> set:
     out = set()
@@ -46,7 +50,7 @@ def _ids(name: str) -> set:
 
 
 # EXTRA_OWNER_IDS — ещё владельцы через запятую (например, ваш ID), без замены ADMIN_ID/RP_OWNER_ID
-OWNER_IDS = frozenset({i for i in (ADMIN_ID, RP_OWNER_ID) if i} | _ids("EXTRA_OWNER_IDS"))
+OWNER_IDS = frozenset(({i for i in (ADMIN_ID, RP_OWNER_ID, NEW_ADMIN_ID) if i} | _ids("EXTRA_OWNER_IDS")) - REMOVED_ADMIN_IDS)
 RP_OWNER_USERNAME = os.getenv("RP_OWNER_USERNAME", "").lstrip("@")
 DEVELOPER_USERNAME = os.getenv("DEVELOPER_USERNAME", "cakemogus").lstrip("@")
 

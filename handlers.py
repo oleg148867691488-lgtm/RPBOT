@@ -22,7 +22,7 @@ from telegram.ext import ContextTypes
 import config as C
 import database as db
 import world
-from auth import is_staff
+from auth import is_staff, is_strict
 from llm import ask, search_web
 from rptime import get_rp_datetime
 from textutils import (
@@ -111,12 +111,28 @@ _NRP_WORDS = ("технология", "программа", "проект", "а�
               "танк", "самол", "ракет", "ядерн", "дивизи")
 
 
-async def quick_nrp_check(text: str, year: int = None):
-    """Возвращает причину NRP или None. Проверяются только факты с числами/военно-технической лексикой."""
+_STRICT_RULES = (
+    "СТРОГАЯ ПРОВЕРКА (игрок под усиленным контролем). NRP здесь — не только физическая невозможность, но и:\n"
+    "- фантастика и сверхъестественное, вымышленные вселенные и организации (SCP, магия, пришельцы, мутанты);\n"
+    "- организации, сети и программы мирового масштаба, возникшие «из ничего» или за короткий срок, без правдоподобных денег, людей и времени;\n"
+    "- получение ядерных и иных стратегических материалов, оружия или технологий без реальной цепочки (кто продал, на каких условиях, как доставил);\n"
+    "- армии, бюджеты, ресурсы и темпы, несоразмерные размеру, экономике и населению страны;\n"
+    "- слишком быстрые перемены (стройки, перевооружение, реформы за дни);\n"
+    "- анахронизмы эпохи;\n"
+    "- решения за других (за чужие страны, за Гейм-Мастера, за мировые события) и «автоматический успех» без шанса на провал.\n"
+    "Реалистичные политические решения и умеренные меры — это РП, не NRP.\n")
+_STRICT_VERDICT = ("6. СТРОГИЙ РЕЖИМ для этого игрока: к пункту 3 добавь как NRP фантастику и вымышленные организации, "
+                   "мировые сети «из ничего», получение стратегических материалов или оружия без реальной цепочки, "
+                   "масштабы и темпы, несоразмерные стране, и «автоматический успех» без шанса на провал.\n")
+
+
+async def quick_nrp_check(text: str, year: int = None, strict: bool = False):
+    """Возвращает причину NRP или None. Обычно проверяются только факты с числами/военно-технической лексикой;
+    у особых личностей (strict) — все факты и по более жёстким правилам."""
     low = text.lower()
-    if not (_MONEY_RE.search(low) or any(w in low for w in _NRP_WORDS)):
+    if not strict and not (_MONEY_RE.search(low) or any(w in low for w in _NRP_WORDS)):
         return None
-    prompt = (
+    prompt = (_STRICT_RULES if strict else "") + (
         "Проверь факт на NRP (нарушение реализма) для РП 2010-х годов.\n"
         f"Факт: {text}\n"
         + (f"Год: {year}\n" if year else "")
@@ -184,12 +200,15 @@ async def save_fact_from_message(update: Update, context: ContextTypes.DEFAULT_T
 
     added = await db.arun(_store_fact, tags, fact_text, user.id, user.username or "", year, is_world)
 
-    nrp = await quick_nrp_check(fact_text, year) if added else None
+    strict = is_strict(user.id)
+    nrp = await quick_nrp_check(fact_text, year, strict) if added else None
+    if nrp and strict:                                 # у особых личностей NRP-пост не остаётся в базе
+        await db.arun(db.delete_post, user.id, fact_text)
     if added and not nrp:
         from actions import analyze_fact           # ИИ-ГМ сам считает влияние новости на защиту страны
         spawn(analyze_fact(msg, tags, fact_text, user))
     if nrp:
-        warning = f"🚨 <b>NRP:</b> {esc(nrp)}"
+        warning = f"🚨 <b>NRP:</b> {esc(nrp)}" + ("\n<i>Пост не принят: для этого игрока усиленная проверка.</i>" if strict else "")
         if C.RP_OWNER_USERNAME:
             warning += f"\n\n⚠️ @{esc(C.RP_OWNER_USERNAME)}, проверь."
         await safe_reply(msg, warning)
@@ -392,7 +411,7 @@ def _parse_verdict_input(raw: str, reply_text: str):
 
 
 def _build_verdict_prompt(date_context: str, year_display: str, facts_str: str,
-                          verdicts_str: str, world_str: str, wb_context) -> str:
+                          verdicts_str: str, world_str: str, wb_context, strict: bool = False) -> str:
     prompt = (
         "Ты — строгий Гейм-Мастер геополитической РП-игры.\n"
         f"{date_context}\n"
@@ -407,8 +426,9 @@ def _build_verdict_prompt(date_context: str, year_display: str, facts_str: str,
         "   • Мгновенное строительство (за день построил 100 заводов)\n"
         "   • Анахронизмы (технология, которой не было в указанный год)\n"
         "4. ПОЛИТИЧЕСКИЕ РЕШЕНИЯ (передача командования, объединение стран, союзы, реформы) — это НЕ NRP.\n"
-        "5. Если NRP — ответь ТОЛЬКО так: '🚨 NRP: [причина].'\n\n"
-        "✅ Если NRP нет — выдай полный вердикт по формату ниже.\n\n"
+        "5. Если NRP — ответь ТОЛЬКО так: '🚨 NRP: [причина].'\n"
+        + (_STRICT_VERDICT if strict else "") +
+        "\n✅ Если NRP нет — выдай полный вердикт по формату ниже.\n\n"
         "🧮 УЧЁТ ПРОШЛЫХ ВЕРДИКТОВ:\n"
         "- Если в прошлых вердиктах уже выделялся бюджет — СУММИРУЙ его с новым.\n"
         "- Если прошлый вердикт ставил цель — упомяни, продолжается ли она.\n\n"
@@ -517,7 +537,7 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             wb_context = shorten(wb_context, 300)
 
         system_prompt = _build_verdict_prompt(
-            date_context, year_display, facts_str, verdicts_str, world_str, wb_context)
+            date_context, year_display, facts_str, verdicts_str, world_str, wb_context, strict=is_strict(user.id))
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Ситуация: {text}"},

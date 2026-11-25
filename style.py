@@ -42,3 +42,7 @@ def level(v: float):
     if v < 75:
         return "🟠", "опасно"
     return "🔴", "критично"
+
+
+def hdr_agency(text: str) -> str:
+    return title("🕴", text)

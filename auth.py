@@ -28,7 +28,29 @@ def _bot_admin_ids() -> set:
             ids.update(int(x) for x in json.loads(raw))
         except (ValueError, TypeError):
             pass
-    return ids
+    return ids - set(C.REMOVED_ADMIN_IDS)
+
+
+def strict_ids() -> set:
+    """Особые личности: для них включён усиленный фильтр НРП."""
+    raw = db.get_setting("strict_nrp")
+    try:
+        return {int(x) for x in json.loads(raw)} if raw else set()
+    except (ValueError, TypeError):
+        return set()
+
+
+def is_strict(user_id: int) -> bool:
+    return user_id in strict_ids()
+
+
+def set_strict(user_id: int, on: bool) -> bool:
+    """Пишет в БД (вызывать через db.arun). Возвращает True, если список изменился."""
+    ids = strict_ids()
+    before = set(ids)
+    (ids.add if on else ids.discard)(int(user_id))
+    db.set_setting("strict_nrp", json.dumps(sorted(ids)))
+    return ids != before
 
 
 def is_owner(user_id: int) -> bool:

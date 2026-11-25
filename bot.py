@@ -27,6 +27,8 @@ import config as C
 import database as db
 import events
 import agency
+import agencyui
+import currencies
 import finance
 import gamecmds as gc
 import ui
@@ -192,7 +194,7 @@ def main():
     app.add_handler(CommandHandler("war_verdict", wars.verdict_command))
     app.add_handler(CommandHandler("spy", gc.spy_command))
     app.add_handler(CommandHandler("loot", gc.loot_command))
-    app.add_handler(CommandHandler("agents", agency.agents_command))
+    app.add_handler(CommandHandler(["agents", "agency"], agencyui.agents_ui_command))      # агентство с кнопками
     app.add_handler(CommandHandler("hire", agency.hire_command))
     app.add_handler(CommandHandler("train", agency.train_command))
     app.add_handler(CommandHandler("hq", agency.hq_command))
@@ -213,6 +215,11 @@ def main():
     app.add_handler(CommandHandler(["rollback", "otkat"], gc.rollback_command))
     app.add_handler(CommandHandler(["rollbackpost", "otkatpost"], gc.rollbackpost_command))
     app.add_handler(CommandHandler("autosecret", gc.autosecret_command))
+    app.add_handler(CommandHandler("strict", gc.strict_command))
+    app.add_handler(CommandHandler(["newcurrency", "newvaluta"], currencies.newcurrency_command))
+    app.add_handler(CommandHandler("goldreserve", currencies.goldreserve_command))
+    app.add_handler(CommandHandler("delcurrency", currencies.delcurrency_command))
+    app.add_handler(CommandHandler(["currency", "valuty"], currencies.currency_command))
     app.add_handler(CommandHandler(["otvet", "ultimatum"], gc.otvet_command))
     app.add_handler(CommandHandler("news", gc.news_command))
     app.add_handler(CommandHandler("market", gc.market_command))
@@ -251,6 +258,7 @@ def main():
     # --- Обычные сообщения (вопросы + #теги) и кнопки меню ---
     app.add_handler(MessageHandler((filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(ui.ui_callback, pattern=r"^ui:"))
+    app.add_handler(CallbackQueryHandler(agencyui.callback, pattern=r"^ag:"))
     app.add_handler(CallbackQueryHandler(wars.war_callback, pattern=r"^war:"))
     app.add_handler(CallbackQueryHandler(cmd.menu_callback, pattern=r"^menu_"))
     app.add_error_handler(error_handler)

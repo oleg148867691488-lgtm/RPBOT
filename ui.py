@@ -109,7 +109,8 @@ async def home_screen(user):
         [B("📰 Новости", callback_data="ui:nw:a:0"), B("📈 Биржа", callback_data="ui:mk")],
         [B("🌡 Напряжённость", callback_data="ui:tn"), B("🛡 Моя страна", callback_data="ui:mc")],
         [B("🕵️ Операции", callback_data="ui:op"), B("⚖️ Вердикт", callback_data="ui:vd")],
-        [B("📅 Время РП", callback_data="ui:rp"), B("📖 Помощь", callback_data="ui:hp")],
+        [B("🕴 Агентство", callback_data="ag:h"), B("📅 Время РП", callback_data="ui:rp")],
+        [B("📖 Помощь", callback_data="ui:hp")],
     ]
     if is_staff(user.id):
         rows.append([B("🛠 Админ-панель", callback_data="ui:ad")])
@@ -722,6 +723,8 @@ def market_screen():
         arrow = "🟢▲" if ch > 0.05 else "🔴▼" if ch < -0.05 else "⚪️▬"
         lines.append(f"{name}  <b>{world.fmt_price(k, h[-1])}</b>  {arrow} {ch:+.1f}%")
         lines.append(f"<code>{world.spark(h[-16:])}</code>")
+    import currencies
+    lines += currencies.render_lines()                 # валюты, которые создали страны (с курсом от золотого запаса)
     lines.append("\n<i>Котировки живут сами и дёргаются от мировых событий.</i>")
     return "\n".join(lines), kb([B("🔄 Обновить", callback_data="ui:mk")], HOME)
 
