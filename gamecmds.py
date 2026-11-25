@@ -320,6 +320,35 @@ async def rollback_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_reply(update.effective_message, text, reply_markup=markup)
 
 
+@staff_only
+async def autosecret_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/autosecret on|off — автосекретность: ИИ прячет «секретные» новости и удаляет сообщение. По умолчанию выключено."""
+    msg = update.effective_message
+    arg = (context.args[0].lower() if context.args else "")
+    if arg in ("on", "вкл", "1"):
+        await db.arun(db.set_setting, "auto_secret", "on")
+    elif arg in ("off", "выкл", "0"):
+        await db.arun(db.set_setting, "auto_secret", "off")
+    on = db.get_setting("auto_secret", "off") == "on"
+    await safe_reply(msg, "🔒 Автосекретность: <b>включена</b> — ИИ прячет секретные новости и удаляет сообщение." if on else
+                     "🔓 Автосекретность: <b>выключена</b> — новости остаются в базе и в чате, ничего не удаляется.\n"
+                     "<i>Включить: /autosecret on</i>")
+
+
+@staff_only
+async def rollbackpost_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/rollbackpost — откат постов игроков; /rollbackpost @ник или ID — только посты этого игрока."""
+    author_id = None
+    if context.args:
+        arg = context.args[0]
+        author_id = int(arg) if arg.lstrip("-").isdigit() else await db.arun(db.find_author_id, arg)
+        if not author_id:
+            await safe_reply(update.effective_message, "ℹ️ Не нашёл такого автора среди постов.")
+            return
+    text, markup = await ui.post_rollback_screen(0, author_id)
+    await safe_reply(update.effective_message, text, reply_markup=markup)
+
+
 ORDER_PROMPT["spy"] = ("🕶 <b>Шпионаж</b>\n\nОпиши операцию <b>своими словами</b>, одним сообщением: у какой страны и что крадём "
                        "— красть чертежи и секретные новости (даже если о них не писали: ИИ знает историю эпохи), шпионить за страной "
                        "(выяснить, что готовит), внедрять агентов в правительство и действовать через них (слив, саботаж, доступ). "
