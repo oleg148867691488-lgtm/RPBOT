@@ -51,6 +51,9 @@ METRICS = {
 # МЕЛОЧИ
 # =====================================================================
 
+from style import LINE, level, meter, quote, quote_html, title as hdr
+
+
 def kb(*rows) -> M:
     return M([list(r) for r in rows if r])
 
@@ -89,26 +92,18 @@ def greeting() -> str:
 async def home_screen(user):
     s = await db.arun(db.get_stats)
     rp = get_rp_datetime()
-    lines = [
-        "╭──────────────────────╮",
-        "      🌐 <b>RP BOT AI</b>",
-        "╰──────────────────────╯",
-        f"{greeting()}, <b>{esc(user.first_name or 'друг')}</b>!",
-        "",
-    ]
+    lines = [hdr("👑", "RP BOT AI", "штаб мира"),
+             f"{greeting()}, <b>{esc(user.first_name or 'друг')}</b>!", ""]
     if rp["year"]:
         frac = 1 - (rp["days_to_new_year"] or 0) / 365
         lines += [f"📅 <b>{rp['full']}</b> <i>по РП</i>", f"<code>{bar(frac)}</code> {int(frac * 100)}% года", ""]
     else:
         lines += ["📅 <i>Год РП не задан</i>", ""]
-    lines += [
-        f"📚 <b>{s['total']}</b> фактов  ·  🏷 <b>{s['tags']}</b> тегов  ·  ⚖️ <b>{s['verdicts']}</b> вердиктов",
-        "",
-        "<i>Выбери раздел 👇</i>",
-    ]
+    lines.append(quote_html(f"📚 <b>{s['total']}</b> фактов\n🏷 <b>{s['tags']}</b> тегов\n⚖️ <b>{s['verdicts']}</b> вердиктов"))
     last = await db.arun(db.get_world_events, 1, 0, None)
     if last:
-        lines.insert(len(lines) - 2, f"📰 <i>{esc(shorten(last[0]['text'].split(chr(10))[0], 80))}</i>")
+        lines.append(f"📰 <i>{esc(shorten(last[0]['text'].split(chr(10))[0], 80))}</i>")
+    lines += ["", "<i>Выбери раздел 👇</i>"]
     rows = [
         [B("🌍 Страны", callback_data="ui:cs:0"), B("🏆 Топы", callback_data="ui:top")],
         [B("📰 Новости", callback_data="ui:nw:a:0"), B("📈 Биржа", callback_data="ui:mk")],
@@ -124,8 +119,7 @@ async def home_screen(user):
 async def top_screen(m: str, n: int, y: int):
     code, kind, label, short, emoji = METRICS[m]
     rows, used = await fetch_top(code, y, n)
-    lines = [f"🏆 <b>ТОП-{n} · {emoji} {esc(label.upper())}</b>"]
-    lines.append(f"📅 <i>{used} год" + (f" (за {y} данных нет)" if used != y else "") + "</i>\n")
+    lines = [hdr("🏆", f"Топ-{n}: {label}", f"{used} год" + (f" (за {y} данных нет)" if used != y else "")), ""]
     if rows:
         mx = rows[0]["value"] or 1
         medals = ["🥇", "🥈", "🥉"]
@@ -695,7 +689,7 @@ async def news_screen(f: str = "a", page: int = 0):
     pages = max(1, (total + per - 1) // per)
     page = min(max(page, 0), pages - 1)
     rows = await db.arun(db.get_world_events, per, page * per, kinds)
-    lines = ["📰 <b>МИРОВЫЕ НОВОСТИ</b>", f"<i>🎭 РП-события · стр. {page + 1}/{pages} · всего {total}</i>", ""]
+    lines = [hdr("📰", "Мировые новости", f"страница {page + 1} из {pages} · всего {total}"), ""]
     if not rows:
         lines.append("📭 Пока тихо. Админ может включить события: 🛠 → 🎲 События мира.")
     for r in rows:
@@ -703,7 +697,7 @@ async def news_screen(f: str = "a", page: int = 0):
         where = ISO_RU.get(r["country"], r["country"] or "")
         year = f", {r['rp_year']}" if r["rp_year"] else ""
         lines.append(f"{EMOJI.get(r['kind'], '📰')} <b>{esc(head)}</b>")
-        lines.append(f"{esc(shorten(body, 240))}")
+        lines.append(quote(shorten(body, 240)))
         lines.append(f"<i>📍 {esc(where)}{year}</i>\n")
     names = [("a", "Все"), ("t", "🔥 Конфликты"), ("e", "💹 Экономика"), ("s", "👥 Общество"), ("p", "🕊 Позитив")]
     filt = [B(("• " if k == f else "") + n, callback_data=f"ui:nw:{k}:0") for k, n in names]
@@ -718,7 +712,7 @@ async def news_screen(f: str = "a", page: int = 0):
 
 def market_screen():
     m = world.market()
-    lines = ["📈 <b>БИРЖА</b> <i>(игровые котировки)</i>", ""]
+    lines = [hdr("📈", "Биржа", "игровые котировки"), ""]
     year = get_rp_datetime().get("year") or 2010
     for k, (name, _s, _v, _d) in world.ASSETS.items():
         if not world.asset_active(k, year):          # в 1918-м нет ни биткоина, ни EUR/USD
@@ -734,15 +728,15 @@ def market_screen():
 
 def tension_screen():
     t = sorted(world.tension().items(), key=lambda kv: -kv[1])[:12]
-    lines = ["🌡 <b>НАПРЯЖЁННОСТЬ СТРАН</b>", ""]
+    lines = [hdr("🌡", "Напряжённость стран", "чем выше шкала, тем ближе кризис"), ""]
     if world.wars():
         lines += ["⚔️ <b>Войны:</b> " + "; ".join(f"{esc(ISO_RU.get(a, a))} ↔ {esc(ISO_RU.get(b, b))}" for a, b in world.wars()), ""]
     if not t:
         lines.append("🟢 В мире спокойно.")
     for iso, v in t:
-        icon = "🟢" if v < 25 else "🟡" if v < 50 else "🟠" if v < 75 else "🔴"
-        lines.append(f"{icon} <b>{esc(ISO_RU.get(iso, iso))}</b>\n      <code>{bar(v / 100, 10)}</code> {v:.0f}/100")
-    lines.append("\n<i>Растёт от событий и операций, со временем остывает. Влияет на шансы событий и защиту целей.</i>")
+        icon, word = level(v)
+        lines.append(f"{icon} <b>{esc(ISO_RU.get(iso, iso))}</b> · <i>{word}</i>\n      <code>{bar(v / 100, 10)}</code> {v:.0f}/100")
+    lines.append("\n" + quote("Растёт от событий и операций, со временем остывает. Влияет на шансы событий и защиту целей."))
     return "\n".join(lines), kb([B("🔄 Обновить", callback_data="ui:tn")], HOME)
 
 
@@ -817,7 +811,7 @@ async def country_screen(user):
     caps = world.CAPS
     rows = [("👑 Охрана высших лиц", "top"), ("🏛 Охрана чиновников", "gov"), ("👥 Охрана прочих", "civil"),
             ("🕵️ Разведка", "intel")]
-    lines = [f"🛡 <b>МОЯ СТРАНА · {esc(ISO_RU.get(iso, iso))}</b>", "",
+    lines = [hdr("🛡", f"Моя страна: {ISO_RU.get(iso, iso)}"), "",
              f"🏳️ Базовая защита (задаёт ГМ): <b>{world.security(iso)}</b>/100  ·  общее усиление: <b>{st['sec']:+.0f}</b>",
              f"🌡 Напряжённость: <code>{bar(tens / 100)}</code> {tens:.0f}/100", ""]
     for label, k in rows:
@@ -863,9 +857,9 @@ async def rq_screen(kind: str, rid: int, step: int):
     if not body:
         return "❌ Уже откачено или не найдено.", kb(HOME)
     if step == 1:
-        return ("↩️ <b>Откатить это?</b>\n\n" + body,
+        return (hdr("↩️", "Откатить это?") + "\n" + body,
                 kb([B("✅ Да", callback_data=f"ui:rqa:{kind}:{rid}"), B("❌ Нет", callback_data="ui:rqn")]))
-    return ("⚠️ <b>ТОЧНО откатить? Это нельзя отменить.</b>\n\n" + body,
+    return (hdr("⚠️", "Точно откатить?", "это нельзя отменить") + "\n" + body,
             kb([B("❌ Отмена", callback_data="ui:rqn"), B("⚠️ ДА, ОТКАТИТЬ", callback_data=f"ui:rqd:{kind}:{rid}")]))
 
 

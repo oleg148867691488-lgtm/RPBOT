@@ -88,10 +88,10 @@ async def _saved_answer(iso: str, key: str):
 
 
 def _render(iso: str, d: dict) -> str:
-    return (f"📨 <b>Ответ {esc(_name(iso))} на ультиматум</b>\n\n"
+    return (f"📨 <b>Ответ: {esc(_name(iso))} на ультиматум</b>\n━━━━━━━━━━━━━━━━\n"
             f"⚖️ Решение: <b>{esc(str(d.get('decision', '—')))}</b>\n\n"
-            f"🗣 {esc(shorten(str(d.get('statement', '')), 700))}\n\n"
-            f"➡️ {esc(shorten(str(d.get('consequence', '')), 400))}")
+            f"<blockquote>🗣 {esc(shorten(str(d.get('statement', '')), 700))}</blockquote>\n"
+            f"➡️ <i>{esc(shorten(str(d.get('consequence', '')), 400))}</i>")
 
 
 async def answer_ultimatum(update, context, raw: str):

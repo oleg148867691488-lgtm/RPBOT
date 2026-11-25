@@ -315,9 +315,10 @@ def format_event(kind: str, isos: list, rp: dict, head: str, body: str, market_l
                                                            "war": "⚔️ Сводка с фронта", "spy": "🕶 Шпионский скандал"}.get(kind, "📰 Событие")
     where = " ↔ ".join(esc(_name(i)) for i in isos)
     when = f" · 📅 {rp['full']}" if rp.get("full") else ""
-    out = f"🎭 <b>РП-СОБЫТИЕ · {title}</b>\n📍 {where}{when}\n\n<b>{esc(head)}</b>\n{esc(body)}"
+    out = (f"🎭 <b>{title}</b>\n━━━━━━━━━━━━━━━━\n📍 <b>{where}</b>{when}\n\n"
+           f"<b>{esc(head)}</b>\n<blockquote>{esc(body)}</blockquote>")        # head и body идут подряд, откат по ответу их находит
     if market_line:
-        out += f"\n\n{market_line}"
+        out += f"\n{market_line}"
     return out
 
 
