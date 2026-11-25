@@ -78,6 +78,45 @@ EVENTS = {
     "coup": dict(emoji="🪖", name="Переворот", weight=0.25, sev=(3, 5), two=False, tension=25, shocks={"gold": .02, "stocks": -.03},
                 brief="попытка государственного переворота или военного мятежа против правительства (успех, провал или подавление — "
                       "на усмотрение); без главы государства по имени и без описания насилия"),
+
+    # ---- новые виды событий ----
+    "sport": dict(emoji="🏆", name="Спорт", weight=3, sev=(1, 2), two=False, tension=-2, shocks={},
+                  brief="крупное спортивное событие: чемпионат, финал или победа сборной, настроение в стране; без реальных клубов и спортсменов по имени"),
+    "culture": dict(emoji="🎭", name="Культура", weight=2.5, sev=(1, 2), two=False, tension=-1, shocks={},
+                    brief="культурное событие: фестиваль, громкая премьера, выставка или юбилей театра; вымышленные названия и имена"),
+    "tech": dict(emoji="⚙️", name="Технологии", weight=2.5, sev=(1, 2), two=False, tension=-1, shocks={"stocks": .012},
+                 brief="технологический прорыв или запуск нового завода, линии, изобретения; только то, что возможно в эту эпоху, без технических подробностей"),
+    "space": dict(emoji="🛰", name="Космос", weight=1.0, sev=(1, 3), two=False, tension=1, shocks={},
+                  brief="космическая или высотная программа страны (запуск, испытание, достижение); только если это возможно в эту эпоху, иначе — "
+                        "громкое достижение в авиации или науке"),
+    "energy": dict(emoji="⛽", name="Энергетика", weight=2.5, sev=(1, 3), two=False, tension=4, shocks={"oil": .02},
+                   brief="энергетический вопрос: перебои с поставками, спор о цене топлива, авария на энергообъекте или новое месторождение; без технических деталей"),
+    "refugees": dict(emoji="🧳", name="Беженцы", weight=1.2, sev=(2, 3), two=True, tension=8, shocks={},
+                     brief="поток беженцев или миграционный кризис из первой страны ко второй, реакция властей и общества; без натуралистичных подробностей"),
+    "harvest": dict(emoji="🌾", name="Урожай", weight=2.0, sev=(1, 3), two=False, tension=0, shocks={},
+                    brief="рекордный урожай, засуха или неурожай, влияние на цены на продовольствие и настроения в стране"),
+    "drills": dict(emoji="🎖", name="Учения", weight=2.0, sev=(1, 3), two=False, tension=6, shocks={"gold": .005},
+                   brief="крупные военные учения или парад, реакция соседей; без описания тактики и вооружений в технических деталях"),
+    "boom": dict(emoji="💰", name="Экономический подъём", weight=2.0, sev=(1, 2), two=False, tension=-2, shocks={"stocks": .015},
+                 brief="экономический рост, крупный контракт, приток инвестиций или рекордный торговый баланс"),
+    "recession": dict(emoji="📉", name="Спад", weight=1.8, sev=(2, 3), two=False, tension=6, shocks={"stocks": -.03},
+                      brief="экономический спад: рост безработицы, инфляция, долговые проблемы или банковские трудности; реакция правительства"),
+    "embassy": dict(emoji="🏛", name="Дипломатический скандал", weight=1.5, sev=(2, 3), two=True, tension=10, shocks={},
+                    brief="дипломатический скандал между двумя странами: высылка дипломатов, нота протеста, отзыв посла; без войны и насилия"),
+    "aid": dict(emoji="🤲", name="Помощь", weight=1.5, sev=(1, 2), two=True, tension=-4, shocks={},
+                brief="гуманитарная помощь или кредит от первой страны второй после бедствия или кризиса"),
+    "separatism": dict(emoji="🏴", name="Автономия", weight=0.8, sev=(2, 4), two=False, tension=12, shocks={"stocks": -.015},
+                       brief="требования региона об автономии или независимости: митинги, переговоры, жёсткая реакция центра; без описания насилия"),
+    "blackout": dict(emoji="🔌", name="Блэкаут", weight=1.2, sev=(2, 3), two=False, tension=4, shocks={"oil": .01},
+                     brief="массовое отключение электричества в крупных городах, причины выясняются, меры властей; без подробностей сетей"),
+    "industrial": dict(emoji="🏭", name="Авария", weight=1.5, sev=(2, 3), two=False, tension=3, shocks={"stocks": -.01},
+                       brief="крупная техногенная авария на заводе или транспорте и расследование; без натуралистичных подробностей и точного числа жертв"),
+    "holiday": dict(emoji="🎆", name="Праздник", weight=2.0, sev=(1, 1), two=False, tension=-2, shocks={},
+                    brief="национальный праздник или юбилей независимости, торжества и речи (без глав государств по имени)"),
+    "leak": dict(emoji="🗞", name="Утечка", weight=1.2, sev=(2, 3), two=True, tension=8, shocks={},
+                 brief="публикация утечки закрытых документов, задевшая две страны, реакция обеих сторон; без реальных имён и без технических деталей"),
+    "crime": dict(emoji="🚔", name="Криминал", weight=2.0, sev=(1, 3), two=False, tension=3, shocks={},
+                  brief="громкая полицейская операция против организованной преступности или контрабанды; без подробностей методов"),
 }
 EMOJI = {k: v["emoji"] for k, v in EVENTS.items()}
 EMOJI["attack"] = "🎯"
@@ -96,9 +135,28 @@ ALIASES = {
     "коррупц": "corruption", "взятк": "corruption", "торгов": "trade_war", "тариф": "trade_war", "эмбарго": "trade_war", "блокад": "trade_war", "санкци": "trade_war",
     "стихи": "disaster", "катастроф": "disaster", "землетряс": "disaster", "наводнен": "disaster", "ураган": "disaster",
     "эпидеми": "pandemic", "пандеми": "pandemic", "болезн": "pandemic", "переворот": "coup", "путч": "coup", "мятеж": "coup",
+    "спорт": "sport", "чемпионат": "sport", "олимпиад": "sport", "матч": "sport", "культур": "culture", "фестиваль": "culture",
+    "премьер": "culture", "выставк": "culture", "технолог": "tech", "изобретен": "tech", "космос": "space", "спутник": "space",
+    "ракет": "space", "энергет": "energy", "нефтепровод": "energy", "газопровод": "energy", "беженц": "refugees", "миграц": "refugees",
+    "урожай": "harvest", "засух": "harvest", "голод": "harvest", "учени": "drills", "парад": "drills", "манёвр": "drills",
+    "рост ввп": "boom", "подъём": "boom", "подъем": "boom", "инвестици": "boom", "рецесси": "recession", "кризис": "recession",
+    "безработиц": "recession", "инфляци": "recession", "посольств": "embassy", "посол": "embassy", "дипскандал": "embassy",
+    "гуманитарн": "aid", "помощь": "aid", "сепаратизм": "separatism", "автоном": "separatism", "независимост": "separatism",
+    "блэкаут": "blackout", "электричеств": "blackout", "авари": "industrial", "завод": "industrial", "праздник": "holiday",
+    "юбилей": "holiday", "утечк": "leak", "криминал": "crime", "мафи": "crime", "картел": "crime", "контрабанд": "crime",
 }
-PER_DAY = {"off": 0, "calm": 2, "normal": 5, "hot": 10}
-MODE_NAMES = {"off": "⏸ Выключены", "calm": "😴 Тихо (~2/день)", "normal": "📰 Норма (~5/день)", "hot": "🔥 Жарко (~10/день)"}
+PER_DAY = {"off": 0, "calm": 2, "normal": 5, "hot": 10, "lively": 15, "intense": 20, "storm": 25, "chaos": 30}
+MODE_NAMES = {"off": "⏸ Выключены", "calm": "😴 Тихо (~2/день)", "normal": "📰 Норма (~5/день)", "hot": "🔥 Жарко (~10/день)",
+              "lively": "🎉 Оживлённо (~15/день)", "intense": "⚡ Бурно (~20/день)",
+              "storm": "🌪 Шторм (~25/день)", "chaos": "💥 Хаос (~30/день)"}
+
+# страны, которые участвуют в событиях наравне с «играемыми» (если у них нет игроков, они всё равно живут в мире)
+EXTRA_COUNTRIES = ["ARG", "AUS", "AUT", "BEL", "BGD", "BLR", "CAN", "CHE", "CHL", "COL", "CUB", "CZE", "DNK", "DZA", "EGY",
+                   "ESP", "EST", "ETH", "FIN", "GEO", "GRC", "HUN", "IDN", "IRL", "IRN", "IRQ", "ISR", "ITA", "KAZ", "KEN",
+                   "KOR", "LTU", "LVA", "MAR", "MEX", "MYS", "NGA", "NLD", "NOR", "NZL", "PAK", "PER", "PHL", "POL", "PRK",
+                   "PRT", "ROU", "SAU", "SRB", "SVK", "SWE", "SYR", "THA", "UKR", "UZB", "VEN", "VNM", "ZAF", "AZE", "ARM",
+                   "AFG", "LBY", "YEM", "BGR", "HRV", "ISL", "ARE", "QAT", "SGP", "SDN", "MMR"]
+_PLAYED: set = set()
 
 DEFAULT_COUNTRIES = ["RUS", "USA", "CHN", "DEU", "FRA", "GBR", "JPN", "IND", "BRA", "TUR"]
 _last_event = 0.0
@@ -129,10 +187,23 @@ async def play_countries() -> list:
     return isos if len(isos) >= 3 else DEFAULT_COUNTRIES
 
 
+async def event_countries() -> list:
+    """Для событий мира: играемые страны + много других, чтобы мир жил не вокруг пяти стран."""
+    base = await play_countries()
+    _PLAYED.clear()
+    _PLAYED.update(base)
+    return base + [c for c in EXTRA_COUNTRIES if c in ISO_RU and c not in base]
+
+
 def _pick(pool: list, t: dict, exclude=()) -> str:
     items = [c for c in pool if c not in exclude]
+    n_pl = sum(1 for c in items if c in _PLAYED)
+    n_ex = len(items) - n_pl
+    # играемые страны остаются заметно чаще, но остальные тоже регулярно попадают в новости (примерно 60/40)
+    boost = max(3.0, 1.5 * n_ex / max(1, n_pl)) if n_pl and n_ex else 1.0
     # чем выше напряжённость — тем чаще; страны, ведущие войну, — втрое чаще
-    return random.choices(items, weights=[(1 + t.get(c, 0) / 25) * (3 if world.at_war(c) else 1) for c in items])[0]
+    return random.choices(items, weights=[(1 + t.get(c, 0) / 25) * (3 if world.at_war(c) else 1) *
+                                          (boost if c in _PLAYED else 1.0) for c in items])[0]
 
 
 def _market_shock(iso: str, sev: int):
@@ -359,7 +430,7 @@ async def create_event(bot, kind: str = None, isos: list = None, announce: bool 
     kind = kind if kind in EVENTS else random.choices(
         list(EVENTS), weights=[EVENTS[k]["weight"] * boost.get(k, 1.0) for k in EVENTS])[0]
     ev = EVENTS[kind]
-    pool = await play_countries()
+    pool = await event_countries()
 
     if not forced and kind in ("protest", "strike"):       # митинги и забастовки — только если обстановка к этому ведёт
         isos = [i for i in (isos or []) if i][:2]
@@ -456,6 +527,16 @@ FOLLOW = {
     "pandemic": [("market", 0.5), ("strike", 0.2), ("protest", 0.2)],
     "election": [("propaganda", 0.2)],
     "divert": [("corruption", 0.5), ("protest", 0.15)],
+    "refugees": [("protest", 0.4), ("propaganda", 0.4), ("aid", 0.3)],
+    "embassy": [("propaganda", 0.5), ("trade_war", 0.2)],
+    "energy": [("market", 0.5), ("protest", 0.2)],
+    "recession": [("protest", 0.5), ("strike", 0.4), ("market", 0.4)],
+    "separatism": [("protest", 0.6), ("propaganda", 0.4), ("incident", 0.2)],
+    "blackout": [("protest", 0.3), ("market", 0.2)],
+    "industrial": [("protest", 0.3), ("corruption", 0.25)],
+    "leak": [("embassy", 0.4), ("propaganda", 0.5)],
+    "drills": [("propaganda", 0.4), ("incident", 0.2)],
+    "harvest": [("market", 0.3), ("aid", 0.2)],
 }
 
 
@@ -483,14 +564,21 @@ async def tick(bot):
         world.decay_cstate(cs)
         await db.arun(lambda: (world.save_market(m), world.save_tension(t), world.save_cstate_all(cs)))
     mode = db.get_setting("events_mode", "off")
-    p = PER_DAY.get(mode, 0) / (86400 / max(60, C.EVENTS_TICK))
-    if p and random.random() < p and time.time() - _last_event > 1200:
+    cap = PER_DAY.get(mode, 0)
+    # сколько автособытий уже вышло за последние сутки (вместе с последствиями) — лимит режима не превышается
+    room = cap - await db.arun(db.count_world_events_since, 24, list(EVENTS)) if cap else 0
+    p = cap * 0.7 / (86400 / max(60, C.EVENTS_TICK))        # 30% суточной нормы оставляем на последствия событий
+    gap = min(1200, 86400 / cap / 3) if cap else 1200
+    if p and room > 0 and random.random() < p and time.time() - _last_event > gap:
         if await create_event(bot):
             _last_event = time.time()
+            room -= 1
     now = time.time()
     for item in [x for x in _queue if x[0] <= now]:
         _queue.remove(item)
-        await create_event(bot, item[1], item[2])
+        if room > 0:
+            if await create_event(bot, item[1], item[2]):
+                room -= 1
     try:
         from spy import agents_tick
         await agents_tick(bot)

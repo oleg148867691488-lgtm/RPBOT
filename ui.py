@@ -674,10 +674,10 @@ async def vs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 KIND_GROUPS = {
     "a": None,
-    "t": ["terror", "incident", "shock", "attack", "military", "war", "spy", "coup"],
-    "e": ["market", "cyber", "strike", "trade_war", "disaster", "pandemic"],
-    "s": ["protest", "propaganda", "death", "decree", "corruption", "election"],
-    "p": ["diplomacy", "alliance", "discovery"],
+    "t": ["terror", "incident", "shock", "attack", "military", "war", "spy", "coup", "drills", "separatism", "embassy", "leak"],
+    "e": ["market", "cyber", "strike", "trade_war", "disaster", "pandemic", "energy", "harvest", "recession", "industrial", "blackout"],
+    "s": ["protest", "propaganda", "death", "decree", "corruption", "election", "refugees", "crime"],
+    "p": ["diplomacy", "alliance", "discovery", "sport", "culture", "tech", "space", "boom", "aid", "holiday"],
 }
 
 
@@ -773,16 +773,16 @@ def events_admin_screen():
         "🎲 <b>СОБЫТИЯ МИРА</b>\n\n"
         f"Режим: <b>{esc(MODE_NAMES.get(mode, mode))}</b>\n"
         f"Тема мировых: {'✅' if wc else '❌ не задана (/saveworld)'}\n\n"
-        "Бот сам публикует: теракты, кибератаки, биржу, митинги, забастовки, пропаганду, утраты, инциденты и "
-        "мировые шоки (редкие); а также дипломатию, альянсы, открытия, выборы, коррупцию, торговые войны, стихии, "
-        "эпидемии и перевороты (редкие, самые тяжёлые — реже всего).\n"
+        "Бот сам публикует более 35 видов событий: от биржи, спорта, культуры и технологий до терактов, "
+        "эпидемий, дипломатических скандалов и переворотов (самые тяжёлые — реже всего). "
+        "В событиях участвуют не только страны с игроками, но и десятки других. Режимы — от тихого (~2 в день) до «Хаоса» (~30 в день).\n"
         "<i>Реальных людей по имени нет — только должности и вымышленные персонажи.</i>\n\n"
         "👇 Выбери вид для разовой генерации, запусти сразу несколько или дай свою идею — бот оформит её сам."
     )
     row = [B(("• " if k == mode else "") + MODE_NAMES[k].split(" (")[0], callback_data=f"ui:evm:{k}") for k in PER_DAY]
     kinds = [B(f"{EVENTS[k]['emoji']} {EVENTS[k]['name']}", callback_data=f"ui:evk:{k}") for k in EVENTS]
     krows = [kinds[i:i + 3] for i in range(0, len(kinds), 3)]
-    return text, kb(row[:2], row[2:], *krows,
+    return text, kb(row[:2], row[2:4], row[4:6], row[6:], *krows,
                     [B("🎲 Случайное", callback_data="ui:evr"), B("🎲×3", callback_data="ui:evb")],
                     [B("💡 Своя идея", callback_data="ui:evi")],
                     [B("⬅️ В админ-панель", callback_data="ui:ad"), HOME[0]])

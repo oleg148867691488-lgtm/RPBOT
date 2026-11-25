@@ -665,6 +665,16 @@ def _kinds_sql(kinds):
     return f" WHERE kind IN ({','.join('?' * len(kinds))})", tuple(kinds)
 
 
+def count_world_events_since(hours: int = 24, kinds=None) -> int:
+    """Сколько событий вышло за последние N часов (по желанию — только заданных видов)."""
+    from datetime import timedelta
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
+    where, params = _kinds_sql(kinds)
+    cond = (where + " AND ts >= ?") if where else " WHERE ts >= ?"
+    rows = execute(f"SELECT COUNT(*) AS c FROM world_events{cond}", (*params, since))
+    return rows[0]["c"] if rows else 0
+
+
 def get_world_events(limit: int = 4, offset: int = 0, kinds=None) -> list:
     where, params = _kinds_sql(kinds)
     return execute(f"SELECT * FROM world_events{where} ORDER BY id DESC LIMIT ? OFFSET ?", (*params, limit, offset))
