@@ -314,8 +314,49 @@ async def addcountry_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await safe_reply(msg, f"✅ Страна <b>{esc(name)}</b> добавлена. Бот будет учитывать её везде.")
 
 
+async def _reply_target(msg):
+    """Что откатываем, если «откат» написан ОТВЕТОМ на сообщение: новость бота ('e') или пост игрока ('p'). None — не нашли."""
+    r = msg.reply_to_message
+    txt = (r.text or r.caption or "") if r else ""
+    if not txt:
+        return None
+    norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()
+    if r.from_user and r.from_user.is_bot:                   # опубликованная новость мира
+        nt = norm(txt)
+        for ev in await db.arun(db.get_world_events, 300, 0, None):
+            head, _, body = ev["text"].partition("\n")
+            if head.strip() and norm(head) in nt and (not body.strip() or norm(body)[:60] in nt):
+                return "e", ev["id"]
+        return None
+    from textutils import parse_fact_line                    # пост игрока «#тег текст (год)»
+    parsed = parse_fact_line(txt)
+    if not parsed or not r.from_user:
+        return None
+    fact_text = parsed[1].strip()
+    for f in await db.arun(db.get_fact_log, 300, 0, r.from_user.id):
+        if f["text"] == fact_text:
+            return "p", f["id"]
+    return None
+
+
+async def rollback_by_reply(update: Update) -> bool:
+    """«Откат» ответом на пост: находим его в базе и спрашиваем «откатить? да/нет» (дальше ещё одно подтверждение)."""
+    msg = update.effective_message
+    if not msg.reply_to_message:
+        return False
+    found = await _reply_target(msg)
+    if not found:
+        await safe_reply(msg, "❌ Не нашёл этот пост в базе. Ответь «откат» на новость бота или на пост игрока с #тегом.")
+        return True
+    text, markup = await ui.rq_screen(found[0], found[1], 1)
+    await safe_reply(msg, text, reply_markup=markup)
+    return True
+
+
 @staff_only
 async def rollback_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await rollback_by_reply(update):                      # «откат» в ответ на пост
+        return
     text, markup = await ui.rollback_screen(0)
     await safe_reply(update.effective_message, text, reply_markup=markup)
 
@@ -344,6 +385,8 @@ async def autosecret_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 @staff_only
 async def rollbackpost_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/rollbackpost — откат постов игроков; /rollbackpost @ник или ID — только посты этого игрока."""
+    if await rollback_by_reply(update):                      # в ответ на пост — откат именно его
+        return
     author_id = None
     if context.args:
         arg = context.args[0]

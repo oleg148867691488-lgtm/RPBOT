@@ -316,7 +316,7 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     await q.answer(toast)
 
-    staff_only = {"ad", "st", "wh", "sf", "sw", "ads", "ex", "im", "ch", "ft", "df", "dy", "ev", "evm", "evr", "evk", "evb", "evi", "ol", "rb", "rby", "rbn", "fb", "fby", "fbn"}
+    staff_only = {"ad", "st", "wh", "sf", "sw", "ads", "ex", "im", "ch", "ft", "df", "dy", "ev", "evm", "evr", "evk", "evb", "evi", "ol", "rb", "rby", "rbn", "fb", "fby", "fbn", "rqa", "rqd", "rqn"}
     if (kind in staff_only and not staff) or (kind in ("dz", "cy") and not owner):
         await edit_html(q, "❌ Доступ закрыт.", kb(HOME))
         return
@@ -456,16 +456,35 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif kind == "fbn":
         await edit_html(q, "↩️ Откат поста отменён.", kb([B("🏠 Меню", callback_data="ui:home")]))
 
-    elif kind == "fby":
-        result = await world.rollback_post(int(p[2]))
-        await edit_html(q, result, kb([B("↩️ Ещё откат постов", callback_data="ui:fb:0")], HOME))
+    elif kind == "fby":                              # старая кнопка: теперь ведёт на второе подтверждение
+        text, markup = await rq_screen("p", int(p[2]), 2)
+        await edit_html(q, text, markup)
+
+    elif kind == "rqa":                              # «Да» → просим подтвердить ещё раз
+        text, markup = await rq_screen(p[2] if len(p) > 2 and p[2] in ("e", "p") else "e",
+                                       int(p[3]) if len(p) > 3 and p[3].isdigit() else 0, 2)
+        await edit_html(q, text, markup)
+
+    elif kind == "rqd":                              # второе «Да» → откат
+        k = p[2] if len(p) > 2 else ""
+        rid = int(p[3]) if len(p) > 3 and p[3].isdigit() else 0
+        if k == "e":
+            result = await world.rollback_event(rid)
+        elif k == "p":
+            result = await world.rollback_post(rid)
+        else:
+            result = "❌ Непонятно, что откатывать."
+        await edit_html(q, result, kb(HOME))
+
+    elif kind == "rqn":
+        await edit_html(q, "↩️ Откат отменён, ничего не тронуто.", kb(HOME))
 
     elif kind == "rbn":
         await edit_html(q, "↩️ Откат отменён.", kb([B("🏠 Меню", callback_data="ui:home")]))
 
-    elif kind == "rby":
-        result = await world.rollback_event(int(p[2]))
-        await edit_html(q, result, kb([B("↩️ Ещё откат", callback_data="ui:rb:0")], HOME))
+    elif kind == "rby":                              # старая кнопка: теперь ведёт на второе подтверждение
+        text, markup = await rq_screen("e", int(p[2]), 2)
+        await edit_html(q, text, markup)
 
     elif kind == "vd":
         text, markup = await verdict_screen(user)
@@ -811,6 +830,45 @@ async def country_screen(user):
     return "\n".join(lines), kb([B("🔄 Обновить", callback_data="ui:mc")], HOME)
 
 
+async def rollback_target_view(kind: str, rid: int):
+    """Описание того, что откатываем: новость мира ('e') или пост игрока ('p'). None — уже нет в базе."""
+    import json as _json
+    if kind == "e":
+        r = await db.arun(db.get_world_event, rid)
+        if not r:
+            return None
+        head, _, body = r["text"].partition("\n")
+        lines = [f"{EMOJI.get(r['kind'], '📰')} <b>{esc(head)}</b>", esc(shorten(body, 320)),
+                 f"<i>📍 {esc(ISO_RU.get(r['country'], r['country'] or ''))} · {r['rp_year'] or ''} · новость #{r['id']}</i>"]
+        try:
+            eff = _json.loads(r.get("effects") or "{}")
+        except ValueError:
+            eff = {}
+        lines.append("<i>Будут отменены: лента, мировой факт" + (", напряжённость, биржа и защита." if eff else
+                     " (последствия старой новости не сохранялись).") + "</i>")
+        return "\n".join(lines)
+    r = await db.arun(db.get_fact, rid)
+    if not r:
+        return None
+    tags = await db.arun(db.get_post_tags, r["author_id"], r["text"])
+    return "\n".join([f"👤 <b>{esc(r['author_name'] or 'без ника')}</b> (<code>{r['author_id']}</code>)",
+                      f"🏷 {esc(' '.join('#' + t for t in tags) or '#' + r['tag'])} · {r['year'] or 'год не указан'} · пост #{r['id']}",
+                      esc(shorten(r["text"], 400)),
+                      "<i>Пост исчезнет из базы фактов по всем тегам; если из-за него ГМ менял защиту страны — это тоже отменится.</i>"])
+
+
+async def rq_screen(kind: str, rid: int, step: int):
+    """Двойное подтверждение отката. Шаг 1: «Да/Нет». Шаг 2: «Точно?» — кнопки поменяны местами, чтобы не промахнуться."""
+    body = await rollback_target_view(kind, rid)
+    if not body:
+        return "❌ Уже откачено или не найдено.", kb(HOME)
+    if step == 1:
+        return ("↩️ <b>Откатить это?</b>\n\n" + body,
+                kb([B("✅ Да", callback_data=f"ui:rqa:{kind}:{rid}"), B("❌ Нет", callback_data="ui:rqn")]))
+    return ("⚠️ <b>ТОЧНО откатить? Это нельзя отменить.</b>\n\n" + body,
+            kb([B("❌ Отмена", callback_data="ui:rqn"), B("⚠️ ДА, ОТКАТИТЬ", callback_data=f"ui:rqd:{kind}:{rid}")]))
+
+
 async def post_rollback_screen(offset: int = 0, author_id=None):
     """«Откатить этот пост игрока? Да / Нет» — листай кнопками к более старым постам, можно только посты одного автора."""
     offset = max(0, offset)
@@ -832,7 +890,7 @@ async def post_rollback_screen(offset: int = 0, author_id=None):
     if offset > 0:
         nav.append(B("◀️ Новее", callback_data=f"ui:fb:{offset - 1}{suf}"))
     nav.append(B("Старше ▶️", callback_data=f"ui:fb:{offset + 1}{suf}"))
-    rows_kb = [[B("✅ Да, откатить", callback_data=f"ui:fby:{r['id']}"), B("❌ Нет", callback_data="ui:fbn")], nav]
+    rows_kb = [[B("✅ Да, откатить", callback_data=f"ui:rqa:p:{r['id']}"), B("❌ Нет", callback_data="ui:fbn")], nav]
     if not author_id and r["author_id"]:
         rows_kb.append([B("👤 Только посты этого автора", callback_data=f"ui:fb:0:{r['author_id']}")])
     return "\n".join(lines), kb(*rows_kb, HOME)
@@ -864,5 +922,5 @@ async def rollback_screen(offset: int = 0):
     if offset > 0:
         nav.append(B("◀️ Новее", callback_data=f"ui:rb:{offset - 1}"))
     nav.append(B("Старше ▶️", callback_data=f"ui:rb:{offset + 1}"))
-    return "\n".join(lines), kb([B("✅ Да, откатить", callback_data=f"ui:rby:{r['id']}"),
+    return "\n".join(lines), kb([B("✅ Да, откатить", callback_data=f"ui:rqa:e:{r['id']}"),
                                  B("❌ Нет", callback_data="ui:rbn")], nav, HOME)
