@@ -117,6 +117,8 @@ def text_help(bot_username: str = "") -> str:
         f"<code>{esc(mention)}, расскажи про Россию</code> (в личке можно без @)\n\n"
         "🔹 <b>Вердикты</b>\n"
         "<code>/verdict Ввести санкции против США 2008</code>\n"
+        "📨 Ответ свободной страны на ультиматум: <code>/otvet Франция</code> или «что ответила Франция на ультиматум?» "
+        "(страну с игроком бот не разыгрывает; ответ запоминается).\n"
         "Или командой <code>/verdict</code> в ответ на сообщение.\n"
         f"Игроки: {C.VERDICT_LIMIT_PLAYER}/день (пауза {int(C.COOLDOWN_VERDICT_PLAYER)} с), "
         f"админы: {C.VERDICT_LIMIT_STAFF}/день ({int(C.COOLDOWN_VERDICT_STAFF)} с).\n\n"

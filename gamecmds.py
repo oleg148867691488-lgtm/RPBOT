@@ -320,6 +320,12 @@ async def rollback_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_reply(update.effective_message, text, reply_markup=markup)
 
 
+async def otvet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/otvet Страна — что ответила свободная страна на ультиматум (решает ИИ-ГМ, ответ запоминается)."""
+    from ultimatum import answer_ultimatum
+    await answer_ultimatum(update, context, update.effective_message.text or "")
+
+
 @staff_only
 async def autosecret_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/autosecret on|off — автосекретность: ИИ прячет «секретные» новости и удаляет сообщение. По умолчанию выключено."""

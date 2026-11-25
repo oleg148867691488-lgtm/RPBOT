@@ -545,6 +545,11 @@ async def verdict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(verdict) > 10000:
             verdict = verdict[:10000] + "\n\n…[вердикт обрезан]"
         await reply_llm(msg, verdict)
+        if not is_nrp:
+            from ultimatum import hint_for
+            hint = hint_for(text)                       # про ультиматум: подсказать, как узнать ответ свободной страны
+            if hint:
+                await safe_reply(msg, hint.strip())
     finally:
         _busy_verdict.discard(user.id)
         if status is not None:
@@ -617,6 +622,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_mention = bool(context.bot.username and f"@{context.bot.username.lower()}" in text.lower())
 
     if not (is_private or is_reply_to_bot or is_mention):
+        return
+
+    from ultimatum import ASK_RE
+    if ASK_RE.search(text) and find_countries(text):           # «что ответила Франция на ультиматум?»
+        from ultimatum import answer_ultimatum
+        await answer_ultimatum(update, context, text)
         return
 
     answer = await answer_question(update, context, text)

@@ -95,6 +95,7 @@ async def post_init(app: Application):
         BotCommand("menu", "Главное меню"),
         BotCommand("help", "Помощь"),
         BotCommand("verdict", "Вердикт по ситуации"),
+        BotCommand("otvet", "Ответ страны на ультиматум"),
         BotCommand("info", "Сводка по стране"),
         BotCommand("top", "Топ стран"),
         BotCommand("vs", "Сравнить две страны"),
@@ -212,6 +213,7 @@ def main():
     app.add_handler(CommandHandler(["rollback", "otkat"], gc.rollback_command))
     app.add_handler(CommandHandler(["rollbackpost", "otkatpost"], gc.rollbackpost_command))
     app.add_handler(CommandHandler("autosecret", gc.autosecret_command))
+    app.add_handler(CommandHandler(["otvet", "ultimatum"], gc.otvet_command))
     app.add_handler(CommandHandler("news", gc.news_command))
     app.add_handler(CommandHandler("market", gc.market_command))
     app.add_handler(CommandHandler("tension", gc.tension_command))
