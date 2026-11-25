@@ -636,7 +636,10 @@ SECRECY_SYSTEM = (
 
 
 async def auto_secret(bot, msg, tags: list, text: str, user, staff: bool) -> bool:
-    """ИИ сам, по смыслу текста, решает, секретно ли сообщение (3+) — никаких #тегов и ключевых слов не требуется."""
+    """ИИ сам, по смыслу текста, решает, секретно ли сообщение (3+) — никаких #тегов и ключевых слов не требуется.
+    По умолчанию ВЫКЛЮЧЕНО: новости остаются в базе и в чате. Включается командой /autosecret on."""
+    if db.get_setting("auto_secret", "off") != "on":
+        return False
     iso = next((i for t in tags for i in find_countries(t)), None)
     if not iso:
         return False
