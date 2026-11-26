@@ -28,6 +28,7 @@ import database as db
 import events
 import agency
 import agencyui
+import aiwars
 import currencies
 import finance
 import gamecmds as gc
@@ -216,6 +217,12 @@ def main():
     app.add_handler(CommandHandler(["rollbackpost", "otkatpost"], gc.rollbackpost_command))
     app.add_handler(CommandHandler("autosecret", gc.autosecret_command))
     app.add_handler(CommandHandler("strict", gc.strict_command))
+    app.add_handler(CommandHandler("aiwar", aiwars.aiwar_command))
+    app.add_handler(CommandHandler("alliance", aiwars.alliance_command))
+    app.add_handler(CommandHandler("unalliance", aiwars.unalliance_command))
+    app.add_handler(CommandHandler("alliances", aiwars.alliances_command))
+    app.add_handler(CommandHandler("annex", aiwars.annex_command))
+    app.add_handler(CommandHandler("unannex", aiwars.unannex_command))
     app.add_handler(CommandHandler(["newcurrency", "newvaluta"], currencies.newcurrency_command))
     app.add_handler(CommandHandler("goldreserve", currencies.goldreserve_command))
     app.add_handler(CommandHandler("delcurrency", currencies.delcurrency_command))
@@ -259,6 +266,7 @@ def main():
     app.add_handler(MessageHandler((filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(ui.ui_callback, pattern=r"^ui:"))
     app.add_handler(CallbackQueryHandler(agencyui.callback, pattern=r"^ag:"))
+    app.add_handler(CallbackQueryHandler(aiwars.callback, pattern=r"^aw:"))
     app.add_handler(CallbackQueryHandler(wars.war_callback, pattern=r"^war:"))
     app.add_handler(CallbackQueryHandler(cmd.menu_callback, pattern=r"^menu_"))
     app.add_error_handler(error_handler)

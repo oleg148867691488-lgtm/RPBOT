@@ -20,6 +20,7 @@ import time
 from telegram.constants import ParseMode
 
 import config as C
+import aiwars
 import currencies
 import database as db
 import world
@@ -193,7 +194,8 @@ async def event_countries() -> list:
     base = await play_countries()
     _PLAYED.clear()
     _PLAYED.update(base)
-    return base + [c for c in EXTRA_COUNTRIES if c in ISO_RU and c not in base]
+    gone = aiwars.annexed()                                  # аннексированные страны больше не участвуют в событиях
+    return [c for c in base + [c for c in EXTRA_COUNTRIES if c in ISO_RU and c not in base] if c not in gone]
 
 
 def _pick(pool: list, t: dict, exclude=()) -> str:
@@ -505,6 +507,8 @@ async def create_event(bot, kind: str = None, isos: list = None, announce: bool 
                       f"world_{_name(isos[0]).lower()}", shorten(f"{head}. {body}", 600), m, t, cs,
                       world.effects_json(t0, t, scaled, {isos[0]: applied}))
         await db.arun(currencies.react_all, {i: t.get(i, 0.0) - t0.get(i, 0.0) for i in isos})   # валюта страны реагирует на событие
+        if kind == "alliance" and len(isos) == 2:
+            await db.arun(aiwars.add_alliance, isos[0], isos[1])        # союз из новости учитывается в войнах
 
     html_text = format_event(kind, isos, rp, head, body, market_line)
     posted = await publish(bot, html_text) if announce else False
@@ -566,6 +570,10 @@ async def tick(bot):
         world.decay_cstate(cs)
         await db.arun(lambda: (world.save_market(m), world.save_tension(t), world.save_cstate_all(cs)))
     await db.arun(currencies.tick)                          # курсы новых валют стран
+    try:
+        await aiwars.tick(bot)                              # войны, союзы и перемирия стран без игроков
+    except Exception:
+        log.exception("Тик войн ИИ-стран не удался")
     mode = db.get_setting("events_mode", "off")
     cap = PER_DAY.get(mode, 0)
     # сколько автособытий уже вышло за последние сутки (вместе с последствиями) — лимит режима не превышается

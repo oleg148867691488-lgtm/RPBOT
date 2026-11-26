@@ -87,6 +87,17 @@ def delete(code: str) -> bool:
     return True
 
 
+def delete_by_iso(iso: str) -> bool:
+    """Страну аннексировали — её валюта исчезает с биржи."""
+    d = load()
+    codes = [k for k, c in d.items() if c["iso"] == iso]
+    for k in codes:
+        del d[k]
+    if codes:
+        _save(d)
+    return bool(codes)
+
+
 def set_gold(iso: str, tons: float, relative: bool):
     """Меняет золотой запас валюты страны. Возвращает (код, было, стало) или None."""
     d = load()

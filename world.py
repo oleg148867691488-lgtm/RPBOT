@@ -25,10 +25,47 @@ ASSETS = {
     "crypto": ("₿ Криптобиржа", 100.0, 0.045, 1),
     "silver": ("🥈 Серебро", 18.0, 0.01, 2),
     "stocks": ("📈 Фондовый индекс", 100.0, 0.01, 0),
+    # металлы и руды
+    "iron": ("⛓ Железная руда", 100.0, 0.009, 1),
+    "copper": ("🟠 Медь", 8000.0, 0.010, 0),
+    "aluminum": ("⚪️ Алюминий", 2200.0, 0.009, 0),
+    "nickel": ("🔘 Никель", 15000.0, 0.014, 0),
+    "zinc": ("🔩 Цинк", 2500.0, 0.010, 0),
+    "tin": ("🥫 Олово", 22000.0, 0.011, 0),
+    "platinum": ("💍 Платина", 1300.0, 0.011, 0),
+    "steel": ("🏗 Сталь", 600.0, 0.009, 0),
+    "lithium": ("🔋 Литий", 15000.0, 0.020, 0),
+    "rare": ("🧲 Редкоземельные металлы", 60.0, 0.022, 1),
+    # энергия
+    "gas": ("🔥 Природный газ", 3.5, 0.016, 2),
+    "coal": ("⚫️ Уголь", 90.0, 0.011, 1),
+    # сельское хозяйство
+    "wheat": ("🌾 Пшеница", 250.0, 0.012, 0),
+    "rice": ("🍚 Рис", 400.0, 0.010, 0),
+    "corn": ("🌽 Кукуруза", 180.0, 0.012, 0),
+    "sugar": ("🍬 Сахар", 0.20, 0.013, 3),
+    "coffee": ("☕️ Кофе", 2.0, 0.014, 2),
+}
+# разделы биржи
+MARKET_CATS = {
+    "main": ("📈 Главное", ["gold", "silver", "usdrub", "eurusd", "usdcny", "crypto", "stocks", "oil", "platinum"]),
+    "metals": ("⛏ Металлы и руды", ["iron", "steel", "copper", "aluminum", "nickel", "zinc", "tin", "lithium", "rare"]),
+    "energy": ("⚡ Энергия", ["oil", "gas", "coal"]),
+    "agro": ("🌾 Агро", ["wheat", "rice", "corn", "sugar", "coffee"]),
+}
+# цены тянутся друг за другом: шок источника переходит на связанные активы (доля шока)
+LINKS = {
+    "oil": {"gas": 0.6, "coal": 0.3},
+    "gas": {"coal": 0.3},
+    "stocks": {"copper": 0.4, "iron": 0.4, "steel": 0.4, "aluminum": 0.3, "nickel": 0.3, "zinc": 0.3, "tin": 0.3, "lithium": 0.3},
+    "gold": {"platinum": 0.5, "silver": 0.4},
+    "wheat": {"corn": 0.5, "rice": 0.3},
+    "iron": {"steel": 0.7},
 }
 # с какого года актив существует (в 1918-м не бывает биткоина и EUR/USD)
 ASSET_FROM = {"oil": 1870, "gold": 0, "silver": 0, "stocks": 1896, "usdrub": 1992, "eurusd": 1999,
-              "usdcny": 1994, "crypto": 2009}
+              "usdcny": 1994, "crypto": 2009, "aluminum": 1890, "nickel": 1890, "platinum": 1900, "steel": 1870,
+              "lithium": 1990, "rare": 1985, "gas": 1900, "sugar": 0, "coffee": 0}
 
 
 def current_year() -> int:
@@ -67,6 +104,11 @@ def market() -> dict:
 
 def tick_market(m: dict, shocks: dict = None) -> dict:
     shocks = {a: v for a, v in (shocks or {}).items() if asset_active(a)}   # шоки только для существующих в эпоху активов
+    for src, links in LINKS.items():                                         # связанные активы реагируют вслед за источником
+        if src in shocks:
+            for dst, share in links.items():
+                if asset_active(dst):
+                    shocks[dst] = shocks.get(dst, 0.0) + shocks[src] * share
     for k, (_n, start, vol, _d) in ASSETS.items():
         v = m["v"][k] * math.exp(random.gauss(0, vol)) * (1 + shocks.get(k, 0.0))
         v += (start - v) * 0.002          # слабая тяга к стартовому уровню

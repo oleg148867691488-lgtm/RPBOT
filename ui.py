@@ -379,7 +379,7 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit_html(q, text, markup)
 
     elif kind == "mk":
-        text, markup = market_screen()
+        text, markup = market_screen(p[2] if len(p) > 2 else "main")
         await edit_html(q, text, markup)
 
     elif kind == "mc":
@@ -711,22 +711,28 @@ async def news_screen(f: str = "a", page: int = 0):
     return "\n".join(lines), kb(filt[:3], filt[3:], nav, HOME)
 
 
-def market_screen():
+def market_screen(cat: str = "main"):
     m = world.market()
-    lines = [hdr("📈", "Биржа", "игровые котировки"), ""]
+    cat = cat if cat in world.MARKET_CATS or cat == "cur" else "main"
+    lines = [hdr("📈", "Биржа", (world.MARKET_CATS[cat][0] if cat != "cur" else "🪙 Валюты стран") + " · игровые котировки"), ""]
     year = get_rp_datetime().get("year") or 2010
-    for k, (name, _s, _v, _d) in world.ASSETS.items():
-        if not world.asset_active(k, year):          # в 1918-м нет ни биткоина, ни EUR/USD
+    for k in (world.MARKET_CATS[cat][1] if cat != "cur" else []):
+        if k not in world.ASSETS or not world.asset_active(k, year):          # в 1918-м нет ни биткоина, ни EUR/USD
             continue
+        name = world.ASSETS[k][0]
         h = m["h"][k]
         ch = world.change_pct(h)
         arrow = "🟢▲" if ch > 0.05 else "🔴▼" if ch < -0.05 else "⚪️▬"
         lines.append(f"{name}  <b>{world.fmt_price(k, h[-1])}</b>  {arrow} {ch:+.1f}%")
         lines.append(f"<code>{world.spark(h[-16:])}</code>")
-    import currencies
-    lines += currencies.render_lines()                 # валюты, которые создали страны (с курсом от золотого запаса)
-    lines.append("\n<i>Котировки живут сами и дёргаются от мировых событий.</i>")
-    return "\n".join(lines), kb([B("🔄 Обновить", callback_data="ui:mk")], HOME)
+    if cat == "cur":
+        import currencies
+        cl = currencies.render_lines()                 # валюты, которые создали страны (с курсом от золотого запаса)
+        lines += cl[1:] if cl else ["Пока ни одна страна не ввела свою валюту.", "<i>Создать: /newcurrency КОД Название золото 500</i>"]
+    lines.append("\n<i>Котировки живут сами и дёргаются от мировых событий. Металлы тянутся за фондовым рынком, газ и уголь за нефтью.</i>")
+    tabs = [B(("• " if k == cat else "") + v[0], callback_data=f"ui:mk:{k}") for k, v in world.MARKET_CATS.items()]
+    tabs.append(B(("• " if cat == "cur" else "") + "🪙 Валюты", callback_data="ui:mk:cur"))
+    return "\n".join(lines), kb(tabs[:2], tabs[2:4], [tabs[4]], [B("🔄 Обновить", callback_data=f"ui:mk:{cat}")], HOME)
 
 
 def tension_screen():
