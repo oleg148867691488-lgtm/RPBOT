@@ -218,6 +218,7 @@ def main():
     app.add_handler(CommandHandler("autosecret", gc.autosecret_command))
     app.add_handler(CommandHandler("strict", gc.strict_command))
     app.add_handler(CommandHandler("aiwar", aiwars.aiwar_command))
+    app.add_handler(CommandHandler("reach", aiwars.reach_command))
     app.add_handler(CommandHandler("alliance", aiwars.alliance_command))
     app.add_handler(CommandHandler("unalliance", aiwars.unalliance_command))
     app.add_handler(CommandHandler("alliances", aiwars.alliances_command))

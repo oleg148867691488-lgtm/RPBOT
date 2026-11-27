@@ -24,6 +24,7 @@ from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup as M
 
 import config as C
 import currencies
+import geo
 import database as db
 import world
 from auth import _bot_admin_ids, is_staff
@@ -182,6 +183,7 @@ async def declare(bot, a: str, b: str, kind: str = "free") -> tuple:
     nm = lambda ids: ", ".join(esc(_name(i)) for i in ids)
     lines = ["🎭 <b>⚔️ Война</b>", "━━━━━━━━━━━━━━━━",
              f"<b>{esc(_name(a))}</b> объявила войну стране <b>{esc(_name(b))}</b>.", f"<blockquote>{esc(reason)}</blockquote>"]
+    lines.append(f"🧭 <i>{esc(geo.how(a, b))}</i>")
     if b in occupied():
         lines.append("🎮 <b>Война против страны, которую ведёт игрок.</b>")
     if ja or jb:
@@ -209,6 +211,7 @@ async def request_war(bot, a: str, b: str) -> bool:
     text = (f"⚔️ <b>Страна без игрока хочет войну</b>\n━━━━━━━━━━━━━━━━\n"
             f"🏴 <b>{esc(_name(a))}</b> → 🎯 <b>{esc(_name(b))}</b>\n"
             f"🔎 {esc(_name(b))} в списке занятых стран: <b>{in_list}</b>\n")
+    text += f"🧭 {esc(geo.how(a, b))}\n"
     if player:
         text += "🎮 <b>Это война против игрока.</b>\n"
     else:
@@ -336,14 +339,15 @@ async def _simulate(bot):
             continue
         key = f"{x}|{y}"
         st = st_all.setdefault(key, {"score": 0.0, "started": now, "last_post": now})
-        st["score"] = max(-1.2, min(1.2, st["score"] + random.gauss(0, 0.035) + 0.01 * (len(side_a) - len(side_b))))
+        reach = geo.projection(x, y)[0]                          # чем дальше театр, тем медленнее решается война
+        st["score"] = max(-1.2, min(1.2, st["score"] + (random.gauss(0, 0.035) + 0.01 * (len(side_a) - len(side_b))) * max(0.4, reach)))
         _set("aiwar_state", st_all)
         if not in_window():
             continue
         age_h = (now - st["started"]) / 3600
         if abs(st["score"]) >= 1.0:
             w, l = (x, y) if st["score"] > 0 else (y, x)
-            if l not in occ and random.random() < 0.3:
+            if l not in occ and geo.can_occupy(w, l) and random.random() < 0.3:     # присоединить можно того, до кого дотянешься
                 await annex(bot, w, l)
             else:
                 text = f"Мирный договор: {_name(l)} признала поражение в войне с {_name(w)}."
@@ -430,7 +434,8 @@ async def tick(bot):
             a = random.choices(free, weights=[1 + t.get(c, 0) / 20 for c in free])[0]
             targets = [c for c in pool if c != a and c not in allies_of(a) and not world.at_war(c)]
             if targets:
-                b = random.choices(targets, weights=[(1 + t.get(c, 0) / 25) * (0.5 if c in occ else 1.0) for c in targets])[0]
+                b = random.choices(targets, weights=[(1 + t.get(c, 0) / 25) * (0.5 if c in occ else 1.0) * geo.weight(a, c)
+                                                     for c in targets])[0]       # соседи и свой регион — охотнее, чем другой край света
                 await request_war(bot, a, b)
     elif random.random() < P_ALLY:
         await _auto_alliance(bot, pool)
@@ -449,6 +454,18 @@ def _status() -> str:
              "<code>/alliance А Б [force]</code> · <code>/unalliance А Б</code> · <code>/alliances</code>",
              "<code>/annex Победитель Проигравший</code> · <code>/unannex Страна</code>"]
     return "\n".join(lines)
+
+
+async def reach_command(update, context):
+    """/reach А Б — как одна страна достаёт другую: граница, регион или только десант."""
+    isos = find_countries(" ".join(context.args or []))
+    if len(isos) < 2:
+        await safe_reply(update.effective_message, "Пример: <code>/reach Узбекистан Малайзия</code>")
+        return
+    a, b = isos[0], isos[1]
+    pr, text = geo.projection(a, b)
+    await safe_reply(update.effective_message, f"🧭 <b>{esc(_name(a))} → {esc(_name(b))}</b>\n{esc(text)}\n"
+                                              f"<i>Доля силы, достающая до цели: {pr:.0%} · шанс выбрать эту цель в войне: ×{geo.weight(a, b):g}</i>")
 
 
 async def aiwar_command(update, context):

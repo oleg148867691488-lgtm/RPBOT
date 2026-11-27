@@ -19,6 +19,7 @@ import re
 
 import aiwars
 import database as db
+import geo
 import world
 from auth import is_staff
 from events import build_context
@@ -316,10 +317,12 @@ async def answer_ultimatum(update, context, raw: str):
                     ratio = p_dem / p_tgt
                     agg, agg_why = await _aggression(dem)
                     shield = await _shield(iso, dem, p_dem, year)
-                    decision, p = _roll(ratio, agg, shield, world.at_war(iso))
+                    proj, proj_why = geo.projection(dem, iso)              # расстояние и анклавы: давить издалека труднее
+                    decision, p = _roll(ratio * proj, agg, shield, world.at_war(iso))
                     strong, weak = (_name(dem), _name(iso)) if ratio >= 1 else (_name(iso), _name(dem))
                     k = ratio if ratio >= 1 else 1 / ratio
-                    power_txt = (f"По {basis_d} {strong} сильнее {weak} примерно в {k:.0f} раз. Агрессивность {_name(dem)}: {agg} ({agg_why}). "
+                    power_txt = (f"По {basis_d} {strong} сильнее {weak} примерно в {k:.0f} раз. Достижимость: {proj_why} "
+                                 f"(реально давит {proj:.0%} силы). Агрессивность {_name(dem)}: {agg} ({agg_why}). "
                                  f"Защита союзников {_name(iso)}: {'есть' if shield else 'нет'}. "
                                  f"Страна{'' if not world.at_war(iso) else ' уже воюет и'} решила: «{decision}».")
                     meta = {"ratio": k, "strong": strong, "agg": agg, "p": p}
