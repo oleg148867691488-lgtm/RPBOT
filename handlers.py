@@ -645,7 +645,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     from ultimatum import ASK_RE
-    if ASK_RE.search(text) and find_countries(text):           # «что ответила Франция на ультиматум?»
+    if (ASK_RE.search(text) or re.match(r"^/ответ\b", text, re.I)) and find_countries(text):   # «что ответила Франция на ультиматум?», «/ответ Франция»
         from ultimatum import answer_ultimatum
         await answer_ultimatum(update, context, text)
         return
