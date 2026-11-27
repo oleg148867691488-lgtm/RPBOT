@@ -428,6 +428,9 @@ def _build_verdict_prompt(date_context: str, year_display: str, facts_str: str,
         "4. ПОЛИТИЧЕСКИЕ РЕШЕНИЯ (передача командования, объединение стран, союзы, реформы) — это НЕ NRP.\n"
         "5. Если NRP — ответь ТОЛЬКО так: '🚨 NRP: [причина].'\n"
         + (_STRICT_VERDICT if strict else "") +
+        "ПРАВИЛО ВОЙНЫ И ОБОРОНЫ: оборону, войска, укрепления и готовность на направлении бери ТОЛЬКО из фактов; если участок "
+        "не укрепляли и об этом не писали, там лишь обычная мирная охрана границы (пограничники). Сам факт наступления "
+        "не доказывает, что там есть силы противника. Не приписывай сторонам подготовку и ресурсы, которых нет в фактах.\n"
         "\n✅ Если NRP нет — выдай полный вердикт по формату ниже.\n\n"
         "🧮 УЧЁТ ПРОШЛЫХ ВЕРДИКТОВ:\n"
         "- Если в прошлых вердиктах уже выделялся бюджет — СУММИРУЙ его с новым.\n"
@@ -644,8 +647,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (is_private or is_reply_to_bot or is_mention):
         return
 
-    from ultimatum import ASK_RE
-    if (ASK_RE.search(text) or re.match(r"^/ответ\b", text, re.I)) and find_countries(text):   # «что ответила Франция на ультиматум?», «/ответ Франция»
+    from ultimatum import ASK_ANY_RE, ASK_RE
+    if (ASK_RE.search(text) or ASK_ANY_RE.search(text) or re.match(r"^/ответ\b", text, re.I)) and find_countries(text):   # «что ответила Франция на ультиматум?», «/ответ Франция»
         from ultimatum import answer_ultimatum
         await answer_ultimatum(update, context, text)
         return

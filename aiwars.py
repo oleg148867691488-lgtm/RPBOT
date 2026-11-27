@@ -99,6 +99,41 @@ def remove_alliance(a: str, b: str) -> bool:
     return True
 
 
+# ---------------------------------------------------------------- вассалы
+
+def vassals() -> dict:
+    """вассал → сюзерен. У вассала нет внешней политики: он не объявляет войн и не заключает союзов."""
+    return _get("vassals", {})
+
+
+def suzerain_of(iso: str):
+    return vassals().get(iso)
+
+
+def vassals_of(iso: str) -> set:
+    return {v for v, s in vassals().items() if s == iso}
+
+
+def set_vassal(v: str, s: str) -> tuple:
+    if v == s:
+        return False, "Страна не может быть вассалом самой себя."
+    d = vassals()
+    if d.get(s) == v:
+        return False, "Сюзерен не может быть вассалом собственного вассала."
+    d[v] = s
+    _set("vassals", d)
+    return True, "Вассальная зависимость оформлена."
+
+
+def release_vassal(v: str) -> bool:
+    d = vassals()
+    if v not in d:
+        return False
+    d.pop(v)
+    _set("vassals", d)
+    return True
+
+
 # ---------------------------------------------------------------- вспомогательное
 
 def _recipients() -> set:
@@ -165,8 +200,21 @@ async def declare(bot, a: str, b: str, kind: str = "free") -> tuple:
         return False, "Эти страны уже воюют."
     if a in annexed() or b in annexed():
         return False, "Одна из стран уже аннексирована."
+    if suzerain_of(a):
+        return False, f"{_name(a)} — вассал {_name(suzerain_of(a))}: внешней политики у него нет, войну объявить не может."
     ja, ra, pa = _side_allies(a, b, defender=False)
     jb, rb, pb = _side_allies(b, a, defender=True)
+    occ_now, seen = occupied(), {a, b}
+    for main, other, joined, plr in ((a, b, ja, pa), (b, a, jb, pb)):          # вассалы идут за сюзереном, сюзерен защищает вассала
+        extra = set(vassals_of(main))
+        if suzerain_of(main):
+            extra.add(suzerain_of(main))
+        for x in sorted(extra - seen - {other}):
+            seen.add(x)
+            (plr if x in occ_now else joined).append(x)
+            for lst in (ra, rb):
+                if x in lst:
+                    lst.remove(x)
     rp = get_rp_datetime()
     reason = await _blurb(f"Страна {_name(a)} объявляет войну стране {_name(b)} в {rp.get('year') or 'наше время'} году. Назови повод.",
                           "Накопившиеся пограничные и торговые споры вылились в открытый конфликт.")
@@ -372,6 +420,8 @@ async def propose_alliance(bot, a: str, b: str, force: bool = False) -> tuple:
     """Страна может не захотеть союза. force — решение админа."""
     if b in allies_of(a):
         return False, "Они уже союзники."
+    if not force and (suzerain_of(a) or suzerain_of(b)):
+        return False, "Вассал не ведёт внешней политики и не заключает союзов сам."
     occ = occupied()
     t = world.tension()
     if not force and a not in occ and b not in occ:
@@ -386,7 +436,7 @@ async def propose_alliance(bot, a: str, b: str, force: bool = False) -> tuple:
 
 async def _auto_alliance(bot, pool):
     occ = occupied()
-    free = [c for c in pool if c not in occ]
+    free = [c for c in pool if c not in occ and not suzerain_of(c)]
     if len(free) < 2:
         return
     a, b = random.sample(free, 2)
@@ -429,7 +479,7 @@ async def tick(bot):
     pending = any(r["state"] == "pending" for r in _get("aiwar_req", {}).values())
     if not pending and random.random() < P_WAR:
         t = world.tension()
-        free = [c for c in pool if c not in occ and not world.at_war(c)]
+        free = [c for c in pool if c not in occ and not world.at_war(c) and not suzerain_of(c)]    # вассалы войн не начинают
         if free:
             a = random.choices(free, weights=[1 + t.get(c, 0) / 20 for c in free])[0]
             targets = [c for c in pool if c != a and c not in allies_of(a) and not world.at_war(c)]
@@ -513,6 +563,37 @@ async def unalliance_command(update, context):
     isos = find_countries(" ".join(context.args or []))
     ok = len(isos) >= 2 and await db.arun(remove_alliance, isos[0], isos[1])
     await safe_reply(msg, "✅ Союз расторгнут." if ok else "ℹ️ Такого союза нет. Пример: <code>/unalliance Франция Германия</code>")
+
+
+async def vassal_command(update, context):
+    """/vassal Вассал Сюзерен — оформить вассальную зависимость (у вассала нет внешней политики)."""
+    msg = update.effective_message
+    if not is_staff(update.effective_user.id):
+        await safe_reply(msg, "❌ Только для админов.")
+        return
+    isos = find_countries(" ".join(context.args or []))
+    if len(isos) < 2:
+        await safe_reply(msg, "Пример: <code>/vassal Бутан Индия</code> (сначала вассал, потом сюзерен)")
+        return
+    ok, text = await db.arun(set_vassal, isos[0], isos[1])
+    await safe_reply(msg, f"{'👑' if ok else '❌'} {esc(text)}" + (f"\n<i>{esc(_name(isos[0]))} больше не ведёт внешней политики: не объявляет войн, не заключает союзов, "
+                                                                f"на ультиматумы отвечает {esc(_name(isos[1]))}; в войнах идёт за сюзереном.</i>" if ok else ""))
+
+
+async def unvassal_command(update, context):
+    msg = update.effective_message
+    if not is_staff(update.effective_user.id):
+        await safe_reply(msg, "❌ Только для админов.")
+        return
+    isos = find_countries(" ".join(context.args or []))
+    ok = bool(isos) and await db.arun(release_vassal, isos[0])
+    await safe_reply(msg, "✅ Страна снова независима." if ok else "ℹ️ Такая страна не вассал. Пример: <code>/unvassal Бутан</code>")
+
+
+async def vassals_command(update, context):
+    d = vassals()
+    await safe_reply(update.effective_message, ("👑 <b>Вассалы</b>\n" + "\n".join(f"• {esc(_name(v))} → {esc(_name(s))}" for v, s in d.items())) if d
+                     else "👑 Вассалов пока нет. Оформить: <code>/vassal Вассал Сюзерен</code>")
 
 
 async def alliances_command(update, context):

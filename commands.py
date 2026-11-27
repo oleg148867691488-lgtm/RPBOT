@@ -172,7 +172,7 @@ def text_help(bot_username: str = "") -> str:
         "/addcountry Название — добавить новую страну РП · /secrets · /delsecret id — управление секретами\n"
         "/rollback или слово «откат» — откатить новость (удалить из ленты и отменить последствия)\n"
         "/aiwar off|approve|auto — войны стран без игроков (объявляют с 06:00 до 22:00 МСК, чаще с соседями и своим регионом); /aiwar declare А Б; /reach А Б — как страна достаёт другую; "
-        "/alliance А Б [force], /unalliance, /alliances; /annex Победитель Проигравший, /unannex Страна\n"
+        "/alliance А Б [force], /unalliance, /alliances; /vassal Вассал Сюзерен (у вассала нет внешней политики), /unvassal, /vassals; /annex Победитель Проигравший, /unannex Страна\n"
         "/strict add|del @ник|ID (или ответом) — особые личности: усиленный фильтр НРП (проверяются все факты, NRP-пост не остаётся в базе); /strict list\n"
         "/goldreserve Страна 800|+50|-30 — золотой запас валюты страны; /delcurrency КОД — удалить валюту\n"
         "/autosecret [on|off] — автосекретность новостей (по умолчанию выключена: бот ничего не прячет и не удаляет)\n"
@@ -244,8 +244,36 @@ def text_year() -> str:
 # ПРОСТЫЕ КОМАНДЫ
 # =====================================================================
 
+def help_pages(bot_username: str = "", limit: int = 3500) -> list:
+    """Справка не влезает в одно сообщение (лимит Telegram 4096 символов) — режем по абзацам на страницы."""
+    blocks = text_help(bot_username).split("\n\n")
+    pages, cur = [], ""
+    for b in blocks:
+        if cur and len(cur) + len(b) + 2 > limit:
+            pages.append(cur)
+            cur = ""
+        cur = (cur + "\n\n" + b) if cur else b
+    if cur:
+        pages.append(cur)
+    return pages or [""]
+
+
+def help_view(bot_username: str = "", page: int = 0):
+    """(текст страницы, кнопки листания)."""
+    pages = help_pages(bot_username)
+    page = max(0, min(page, len(pages) - 1))
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Назад", callback_data=f"ui:hp:{page - 1}"))
+    if page < len(pages) - 1:
+        nav.append(InlineKeyboardButton("Дальше ▶️", callback_data=f"ui:hp:{page + 1}"))
+    rows = ([nav] if nav else []) + [[InlineKeyboardButton("🏠 Меню", callback_data="ui:home")]]
+    return pages[page] + (f"\n\n<i>Страница {page + 1} из {len(pages)}</i>" if len(pages) > 1 else ""), InlineKeyboardMarkup(rows)
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await safe_reply(update.message, text_help(context.bot.username or ""))
+    text, markup = help_view(context.bot.username or "", 0)
+    await safe_reply(update.message, text, reply_markup=markup)
 
 
 @staff_only
@@ -752,7 +780,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_tags":
         await edit_html(query, await text_tags(), back_keyboard())
     elif data == "menu_help":
-        await edit_html(query, text_help(context.bot.username or ""), back_keyboard())
+        text, markup = help_view(context.bot.username or "", 0)
+        await edit_html(query, text, markup)
     elif data == "menu_wheresave":
         await edit_html(query, text_where_save(), back_keyboard())
     elif data == "menu_year":

@@ -490,7 +490,8 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit_html(q, text, markup)
 
     elif kind == "hp":
-        await edit_html(q, cmd.text_help(context.bot.username or ""), kb(HOME))
+        text, markup = cmd.help_view(context.bot.username or "", int(p[2]) if len(p) > 2 and p[2].isdigit() else 0)
+        await edit_html(q, text, markup)
 
     elif kind == "ad":
         text, markup = await admin_screen(user)

@@ -98,7 +98,7 @@ async def post_init(app: Application):
         BotCommand("menu", "Главное меню"),
         BotCommand("help", "Помощь"),
         BotCommand("verdict", "Вердикт по ситуации"),
-        BotCommand("otvet", "Ответ страны на ультиматум"),
+        BotCommand("otvet", "Ответ страны на любое обращение"),
         BotCommand("info", "Сводка по стране"),
         BotCommand("top", "Топ стран"),
         BotCommand("vs", "Сравнить две страны"),
@@ -222,6 +222,9 @@ def main():
     app.add_handler(CommandHandler("alliance", aiwars.alliance_command))
     app.add_handler(CommandHandler("unalliance", aiwars.unalliance_command))
     app.add_handler(CommandHandler("alliances", aiwars.alliances_command))
+    app.add_handler(CommandHandler("vassal", aiwars.vassal_command))
+    app.add_handler(CommandHandler("unvassal", aiwars.unvassal_command))
+    app.add_handler(CommandHandler("vassals", aiwars.vassals_command))
     app.add_handler(CommandHandler("annex", aiwars.annex_command))
     app.add_handler(CommandHandler("unannex", aiwars.unannex_command))
     app.add_handler(CommandHandler(["newcurrency", "newvaluta"], currencies.newcurrency_command))

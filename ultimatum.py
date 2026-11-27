@@ -49,6 +49,7 @@ ULT_RE = re.compile(_PROP, re.I)                      # любое такое о
 _ANS = r"(?:ответ|отве[тч]\w*|реакци\w*|отреагир\w*|решил\w*|решение|согласил\w*|принял\w*|отклонил\w*)"
 # «что ответила Франция на ультиматум / на деловое предложение», «как отреагировала Польша на предложение о союзе»
 ASK_RE = re.compile(rf"{_ANS}.{{0,80}}(?:{_PROP})|(?:{_PROP}).{{0,80}}{_ANS}", re.I | re.S)
+ASK_ANY_RE = re.compile(r"(?:что|как)\s+(?:ответ\w+|отреагир\w+|решил\w+)", re.I)     # «что ответила Папуа — Новая Гвинея?» (на что угодно)
 MARK = "[ОТВЕТ НА УЛЬТИМАТУМ #"
 _cd = Cooldown()
 
@@ -81,7 +82,9 @@ def _system(label: str, decision: str = None) -> str:
     if label in HARD:
         return base + ("Сильная и независимая страна обычно отклоняет или затягивает, слабая и зависимая перед намного "
                        "более сильным и агрессивным соседом чаще уступает. " + _DATA)
-    return base + ("Оцени выгоду и риски для страны, её экономику, отношения с обратившейся стороной (торговля, санкции, союзы, вражда) "
+    kind_hint = ("Сначала по тексту пойми, что это: ультиматум, требование, предложение, вопрос, заявление, просьба или угроза, и отвечай по сути. "
+                 "Не считай обращение ультиматумом, если в нём нет жёсткого требования со сроком или угрозы. " if label == "обращение" else "")
+    return base + (kind_hint + "Оцени выгоду и риски для страны, её экономику, отношения с обратившейся стороной (торговля, санкции, союзы, вражда) "
                    "и обстановку в мире. Страна может согласиться, согласиться на своих условиях, отказаться, предложить своё или "
                    "потянуть время; не соглашайся на заведомо невыгодное и не отказывай заведомо выгодному. " + _DATA)
 
@@ -240,6 +243,8 @@ def _render(iso: str, d: dict, label: str = "ультиматум") -> str:
            f"⚖️ Решение: <b>{esc(str(d.get('decision', '—')))}</b>\n\n"
            f"<blockquote>🗣 {esc(shorten(str(d.get('statement', '')), 700))}</blockquote>\n"
            f"➡️ <i>{esc(shorten(str(d.get('consequence', '')), 400))}</i>")
+    if d.get("note"):
+        out += f"\n\n👑 <i>{esc(d['note'])}</i>"
     meta = d.get("meta")
     if meta:
         out += (f"\n\n<i>⚙️ Расчёт игры: сила {meta['ratio']:.0f}:1 в пользу {esc(meta['strong'])}"
@@ -275,9 +280,18 @@ async def answer_ultimatum(update, context, raw: str):
         await safe_reply(msg, f"🎮 <b>{esc(_name(iso))}</b> ведёт игрок — ответ даёт он, а не бот."
                               + ("\n<i>Админ может заставить ИИ ответить: <code>/otvet Страна force</code></i>" if staff else ""))
         return
+    orig_iso, vassal_note = iso, ""
+    sz = aiwars.suzerain_of(iso)
+    if sz:                                                # у вассала нет внешней политики: отвечает сюзерен
+        if players_of(sz) and not (staff and force):
+            await safe_reply(msg, f"👑 <b>{esc(_name(iso))}</b> — вассал {esc(_name(sz))}, у него нет внешней политики. "
+                                  f"Ответ даёт сюзерен, а им управляет игрок.")
+            return
+        vassal_note = f"{_name(iso)} — вассал {_name(sz)}: внешней политики не ведёт, отвечает сюзерен."
+        iso = sz
 
     free_text = re.sub(r"(?:^|\s)(?:force|принудительно|заново)(?=\s|$)", " ", text, flags=re.I).strip()
-    if len(free_text) >= 60:                              # обращение написано прямо в команде
+    if len(free_text) >= 25:                              # обращение написано прямо в команде
         ult, row = free_text, None
     else:
         ult, row = await _find_ultimatum(iso, reply_text)
@@ -289,14 +303,14 @@ async def answer_ultimatum(update, context, raw: str):
     label = kind_of(ult)
 
     if not (staff and force):
-        old = await _saved_answer(iso, key)
+        old = await _saved_answer(orig_iso, key)
         if old:                                           # уже решали — отвечаем тем же
             try:
                 d = parse_json(old["text"].split("|", 2)[2]) or {}
             except Exception:
                 d = {}
             if d:
-                await safe_reply(msg, _render(iso, d, label) + "\n\n<i>Ответ уже был дан, бот повторяет его.</i>")
+                await safe_reply(msg, _render(orig_iso, d, label) + "\n\n<i>Ответ уже был дан, бот повторяет его.</i>")
                 return
 
     wait = _cd.hit(user.id, 20)
@@ -347,9 +361,11 @@ async def answer_ultimatum(update, context, raw: str):
             d["decision"] = decision                      # решение зафиксировано расчётом, модель его не подменяет
         if meta:
             d["meta"] = meta
-        saved = f"{MARK}{key}]|{iso}|" + json.dumps(d, ensure_ascii=False)
-        await db.arun(db.add_fact, _name(iso).lower(), saved, user.id, user.username or "", None, True)
-        await safe_reply(msg, _render(iso, d, label))
+        if vassal_note:
+            d["note"] = vassal_note
+        saved = f"{MARK}{key}]|{orig_iso}|" + json.dumps(d, ensure_ascii=False)
+        await db.arun(db.add_fact, _name(orig_iso).lower(), saved, user.id, user.username or "", None, True)
+        await safe_reply(msg, _render(orig_iso, d, label))
     except Exception:
         log.exception("Ответ страны не удался")
         _cd.reset(user.id)
