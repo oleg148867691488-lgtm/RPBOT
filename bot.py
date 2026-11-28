@@ -28,6 +28,7 @@ import database as db
 import events
 import agency
 import agencyui
+import referendum
 import aiwars
 import currencies
 import finance
@@ -94,6 +95,8 @@ async def post_init(app: Application):
         raise RuntimeError("База данных недоступна — запуск остановлен") from last_err
 
     worldbank.load_custom(db.get_setting("custom_countries"))
+    import geo
+    geo.load_dynamic(db.get_setting("geo_custom"))                       # новые государства после референдумов
     await app.bot.set_my_commands([
         BotCommand("menu", "Главное меню"),
         BotCommand("help", "Помощь"),
@@ -223,6 +226,7 @@ def main():
     app.add_handler(CommandHandler("unalliance", aiwars.unalliance_command))
     app.add_handler(CommandHandler("alliances", aiwars.alliances_command))
     app.add_handler(CommandHandler("vassal", aiwars.vassal_command))
+    app.add_handler(CommandHandler("referendum", referendum.referendum_command))
     app.add_handler(CommandHandler("unvassal", aiwars.unvassal_command))
     app.add_handler(CommandHandler("vassals", aiwars.vassals_command))
     app.add_handler(CommandHandler("annex", aiwars.annex_command))

@@ -676,8 +676,8 @@ async def vs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 KIND_GROUPS = {
     "a": None,
-    "t": ["terror", "incident", "shock", "attack", "military", "war", "spy", "coup", "drills", "separatism", "embassy", "leak"],
-    "e": ["market", "cyber", "strike", "trade_war", "disaster", "pandemic", "energy", "harvest", "recession", "industrial", "blackout"],
+    "t": ["terror", "incident", "shock", "attack", "military", "war", "spy", "coup", "drills", "separatism", "embassy", "leak", "infra_hit", "blockade", "referendum"],
+    "e": ["market", "cyber", "strike", "trade_war", "disaster", "pandemic", "energy", "harvest", "recession", "industrial", "blackout", "deposit"],
     "s": ["protest", "propaganda", "death", "decree", "corruption", "election", "refugees", "crime"],
     "p": ["diplomacy", "alliance", "discovery", "sport", "culture", "tech", "space", "boom", "aid", "holiday"],
 }

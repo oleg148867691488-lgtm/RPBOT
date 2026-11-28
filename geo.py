@@ -117,3 +117,37 @@ def how(a: str, b: str) -> str:
 def can_occupy(a: str, b: str) -> bool:
     """Может ли a в одиночку занять и присоединить b: нужна общая граница или один регион."""
     return relation(a, b) in ("border", "region")
+
+
+# ---- новые государства (после референдумов): наследуют регион родительской страны и граничат с ней
+def register(iso: str, parent: str):
+    """Пишет в БД (вызывать через db.arun)."""
+    import json
+
+    import database as db
+    REGION[iso] = REGION.get(parent) or REGION.get(iso, "")
+    if not REGION[iso]:
+        REGION.pop(iso, None)
+    NB.setdefault(iso, set()).add(parent)
+    NB.setdefault(parent, set()).add(iso)
+    try:
+        data = json.loads(db.get_setting("geo_custom") or "[]")
+    except ValueError:
+        data = []
+    if [iso, parent] not in data:
+        data.append([iso, parent])
+        db.set_setting("geo_custom", json.dumps(data))
+
+
+def load_dynamic(raw):
+    """При запуске бота: вернуть в таблицу новые государства."""
+    import json
+    try:
+        for iso, parent in json.loads(raw or "[]"):
+            REGION[iso] = REGION.get(parent) or REGION.get(iso, "")
+            if not REGION[iso]:
+                REGION.pop(iso, None)
+            NB.setdefault(iso, set()).add(parent)
+            NB.setdefault(parent, set()).add(iso)
+    except (ValueError, TypeError):
+        pass

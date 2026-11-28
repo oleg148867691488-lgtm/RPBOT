@@ -119,6 +119,20 @@ EVENTS = {
                  brief="публикация утечки закрытых документов, задевшая две страны, реакция обеих сторон; без реальных имён и без технических деталей"),
     "crime": dict(emoji="🚔", name="Криминал", weight=2.0, sev=(1, 3), two=False, tension=3, shocks={},
                   brief="громкая полицейская операция против организованной преступности или контрабанды; без подробностей методов"),
+
+    # ---- ресурсы, блокады и независимость ----
+    "deposit": dict(emoji="⛏", name="Новое месторождение", weight=1.2, sev=(1, 2), two=False, tension=-1, shocks={},
+                    brief="страна нашла крупное месторождение (нефти, газа, угля, руды, лития, золота и т. п. — выбери один ресурс, возможный в эту эпоху) "
+                          "и начинает разработку; назови ресурс прямо словами «месторождение» и название ресурса"),
+    "infra_hit": dict(emoji="🔥", name="Диверсия на промысле", weight=0.8, sev=(2, 3), two=False, tension=6, shocks={},
+                      brief="диверсия или подрыв на месторождении, нефте- или газопроводе, шахте или руднике страны, виновных ищут; "
+                            "назови ресурс прямо; без технических подробностей и способов"),
+    "blockade": dict(emoji="⚓", name="Блокада пролива", weight=0.5, sev=(3, 4), two=True, tension=12, shocks={},
+                     brief="первая страна блокирует или перекрывает морской пролив или залив второй страны (только реально существующие и значимые в эту эпоху: "
+                           "Ормузский, Малаккский, Босфор и т. п.); назови пролив или залив и затронутые грузы прямо; без боевых подробностей"),
+    "referendum": dict(emoji="🗳", name="Референдум о независимости", weight=0.4, sev=(2, 4), two=False, tension=10, shocks={"stocks": -.01},
+                       brief="регион страны провёл референдум о независимости и объявлены итоги (в тексте обязательно слово «референдум», название региона, "
+                             "страны и ясный итог голосования); выбери регион с реальными сепаратистскими настроениями или вымышленный"),
 }
 EMOJI = {k: v["emoji"] for k, v in EVENTS.items()}
 EMOJI["attack"] = "🎯"
@@ -134,7 +148,7 @@ ALIASES = {
     "смерть": "death", "утрата": "death", "инцидент": "incident", "казус": "incident", "шок": "shock",
     "дипломат": "diplomacy", "переговор": "diplomacy", "саммит": "diplomacy", "альянс": "alliance", "блок": "alliance",
     "открыти": "discovery", "месторожден": "discovery", "выбор": "election", "референдум": "election",
-    "коррупц": "corruption", "взятк": "corruption", "торгов": "trade_war", "тариф": "trade_war", "эмбарго": "trade_war", "блокад": "trade_war", "санкци": "trade_war",
+    "коррупц": "corruption", "взятк": "corruption", "торгов": "trade_war", "тариф": "trade_war", "эмбарго": "trade_war", "блокад": "blockade", "санкци": "trade_war",
     "стихи": "disaster", "катастроф": "disaster", "землетряс": "disaster", "наводнен": "disaster", "ураган": "disaster",
     "эпидеми": "pandemic", "пандеми": "pandemic", "болезн": "pandemic", "переворот": "coup", "путч": "coup", "мятеж": "coup",
     "спорт": "sport", "чемпионат": "sport", "олимпиад": "sport", "матч": "sport", "культур": "culture", "фестиваль": "culture",
@@ -145,6 +159,7 @@ ALIASES = {
     "безработиц": "recession", "инфляци": "recession", "посольств": "embassy", "посол": "embassy", "дипскандал": "embassy",
     "гуманитарн": "aid", "помощь": "aid", "сепаратизм": "separatism", "автоном": "separatism", "независимост": "separatism",
     "блэкаут": "blackout", "электричеств": "blackout", "авари": "industrial", "завод": "industrial", "праздник": "holiday",
+    "референдум": "referendum", "месторожден": "deposit", "нефтепровод": "infra_hit", "газопровод": "infra_hit",
     "юбилей": "holiday", "утечк": "leak", "криминал": "crime", "мафи": "crime", "картел": "crime", "контрабанд": "crime",
 }
 PER_DAY = {"off": 0, "calm": 2, "normal": 5, "hot": 10, "lively": 15, "intense": 20, "storm": 25, "chaos": 30}
@@ -195,7 +210,10 @@ async def event_countries() -> list:
     _PLAYED.clear()
     _PLAYED.update(base)
     gone = aiwars.annexed()                                  # аннексированные страны больше не участвуют в событиях
-    return [c for c in base + [c for c in EXTRA_COUNTRIES if c in ISO_RU and c not in base] if c not in gone]
+    import worldbank as _wb
+    pool = base + [c for c in EXTRA_COUNTRIES if c in ISO_RU and c not in base]
+    pool += [c for c in _wb.custom_countries().values() if c not in pool]        # придуманные и вновь возникшие страны живут в мире наравне
+    return [c for c in pool if c not in gone]
 
 
 def _pick(pool: list, t: dict, exclude=()) -> str:
@@ -397,6 +415,7 @@ def format_event(kind: str, isos: list, rp: dict, head: str, body: str, market_l
 
 
 async def publish(bot, html_text: str, chat_id: int = None, thread_id: int = 0) -> bool:
+    is_world = chat_id is None
     if chat_id is None:
         chat_id, thread_id = world_target()
     if not chat_id:
@@ -404,6 +423,9 @@ async def publish(bot, html_text: str, chat_id: int = None, thread_id: int = 0) 
     try:
         await bot.send_message(chat_id=chat_id, text=html_text, parse_mode=ParseMode.HTML,
                                message_thread_id=thread_id or None)
+        if is_world:
+            import worldhooks
+            worldhooks.schedule(bot, html_text)              # рынок, референдумы и вассалитет реагируют на новость
         return True
     except Exception as e:
         log.warning("Не удалось опубликовать событие: %s", e)

@@ -126,6 +126,16 @@ _STRICT_VERDICT = ("6. СТРОГИЙ РЕЖИМ для этого игрока:
                    "масштабы и темпы, несоразмерные стране, и «автоматический успех» без шанса на провал.\n")
 
 
+async def _scan_vassal(msg, fact_text: str):
+    try:
+        import aiwars
+        note = await aiwars.vassalize_from_text(fact_text)
+        if note:
+            await safe_reply(msg, note)
+    except Exception:
+        log.exception("Разбор вассалитета по факту не удался")
+
+
 async def quick_nrp_check(text: str, year: int = None, strict: bool = False):
     """Возвращает причину NRP или None. Обычно проверяются только факты с числами/военно-технической лексикой;
     у особых личностей (strict) — все факты и по более жёстким правилам."""
@@ -204,6 +214,10 @@ async def save_fact_from_message(update: Update, context: ContextTypes.DEFAULT_T
     nrp = await quick_nrp_check(fact_text, year, strict) if added else None
     if nrp and strict:                                 # у особых личностей NRP-пост не остаётся в базе
         await db.arun(db.delete_post, user.id, fact_text)
+    if added and not (nrp and strict):
+        import aiwars
+        if aiwars.VASSAL_RE.search(fact_text) or aiwars.RELEASE_RE.search(fact_text):
+            asyncio.ensure_future(_scan_vassal(msg, fact_text))      # ИИ сам решает, стала ли страна вассалом
     if added and not nrp:
         from actions import analyze_fact           # ИИ-ГМ сам считает влияние новости на защиту страны
         spawn(analyze_fact(msg, tags, fact_text, user))
@@ -643,6 +657,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_to = msg.reply_to_message
     is_reply_to_bot = bool(reply_to and reply_to.from_user and reply_to.from_user.id == context.bot.id)
     is_mention = bool(context.bot.username and f"@{context.bot.username.lower()}" in text.lower())
+
+    if reply_to:                                               # «что ответила?», «это да или нет?», «кто выиграл?» — ответом на сообщение
+        import replyqa
+        rq = replyqa.intent(text)
+        if rq and (is_private or is_reply_to_bot or is_mention or is_staff(msg.from_user.id)):
+            if await replyqa.handle(update, context, text, rq, reply_to.text or reply_to.caption or ""):
+                return
 
     if not (is_private or is_reply_to_bot or is_mention):
         return

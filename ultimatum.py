@@ -245,6 +245,8 @@ def _render(iso: str, d: dict, label: str = "ультиматум") -> str:
            f"➡️ <i>{esc(shorten(str(d.get('consequence', '')), 400))}</i>")
     if d.get("note"):
         out += f"\n\n👑 <i>{esc(d['note'])}</i>"
+    if d.get("vassal_note"):
+        out += f"\n\n👑 <b>{esc(d['vassal_note'])}</b>"
     meta = d.get("meta")
     if meta:
         out += (f"\n\n<i>⚙️ Расчёт игры: сила {meta['ratio']:.0f}:1 в пользу {esc(meta['strong'])}"
@@ -321,7 +323,7 @@ async def answer_ultimatum(update, context, raw: str):
     status = await safe_reply(msg, f"⏳ {esc(_name(iso))} обдумывает ответ…")
     try:
         year = get_rp_datetime().get("year")
-        decision, meta, power_txt = None, None, "расчёт соотношения сил недоступен"
+        decision, meta, power_txt, dem = None, None, "расчёт соотношения сил недоступен", None
         hard = label in HARD or (label == "обращение" and DEMAND_RE.search(ult))
         if hard:
             dem = _demander(iso, ult, row, user.id)
@@ -363,6 +365,12 @@ async def answer_ultimatum(update, context, raw: str):
             d["meta"] = meta
         if vassal_note:
             d["note"] = vassal_note
+        elif str(d.get("decision", "")).startswith("принято") and aiwars.VASSAL_RE.search(ult):      # согласился стать вассалом — запоминаем
+            dv = dem or _demander(iso, ult, row, user.id)
+            if dv and dv != orig_iso and not aiwars.suzerain_of(orig_iso):
+                ok_v, _t = await db.arun(aiwars.set_vassal, orig_iso, dv)
+                if ok_v:
+                    d["vassal_note"] = f"{_name(orig_iso)} принимает требования и становится вассалом {_name(dv)}: внешней политики у неё больше нет."
         saved = f"{MARK}{key}]|{orig_iso}|" + json.dumps(d, ensure_ascii=False)
         await db.arun(db.add_fact, _name(orig_iso).lower(), saved, user.id, user.username or "", None, True)
         await safe_reply(msg, _render(orig_iso, d, label))
